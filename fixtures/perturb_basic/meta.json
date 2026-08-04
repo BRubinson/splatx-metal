@@ -1,0 +1,18 @@
+{
+  "N": 128,
+  "compare": "toleranced",
+  "golden_source": "gsplat@77ab983:strategy/ops.py:494-511 (the torch fallback formula, f32) + _math.py:_quat_scale_to_covar_preci",
+  "k": 100.0,
+  "noise_scale": 0.05,
+  "note": "noise is an input buffer (the kernel is deterministic \u2014 the contract is bit-identical output across two Metal runs). The covariance composition product is compared with tolerances because of differences in fma and accumulation order. [1] has gate 0 (positions unchanged \u2014 bit-identical). wxyz is a pre-activation quat, scales_log is in log space, and opacities_logit is in logit space (the kernel applies exp/sigmoid).",
+  "seeds": {
+    "input": 36
+  },
+  "t": 0.005,
+  "tolerances": {
+    "positions_out": {
+      "atol": 1e-06,
+      "rtol": 1e-05
+    }
+  }
+}

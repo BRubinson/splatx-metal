@@ -1,0 +1,171 @@
+MetalSplatter — Metal 3D Gaussian Splat renderer + splat file I/O Swift package (modified fork, vendored)
+
+Version:   1.0.1 (tag)
+Commit:    71ff248e3016ac43c0a9271e322538421b28c360 (2026-02-19)
+Source:    https://github.com/scier/MetalSplatter
+License:   MIT (LICENSE, Copyright (c) 2026 Sean Cier)
+Vendored:  2026-07-21 (viewer-sort Task 1) / modified: 2026-07-21 (viewer-sort Task 2 — deviations 3–6),
+           2026-07-26 (viewer-sort FIX 1 — deviations 3a and 6 revised: quantizing counting → exact radix)
+
+Vendored files (the 3 modules — the app-consumed products MetalSplatter and SplatIO plus the
+dependency target PLYIO — each including Sources/Tests/TestData/Resources — together with
+LICENSE, README.md, and Package.swift. As of Task 1 only Package.swift was modified (deviation 2)
+and every other file was verified byte-identical against a fresh clone of upstream tag 1.0.1
+via diff -rq. Task 2 modified 4 files + added 3 new ones (deviations 3–6 — marked
+modified/new); the SHA-256 list reflects the current tree state):
+
+SHA-256:
+  72463639df32391216d9ae922e5a574c164e9890da35a11e92ea3ee8686503a4  LICENSE
+  6d7f1bc8eaf0f7e249b1e9d59a47684f922d5e09655736f05075d1c43c07a03c  MetalSplatter/Resources/MultiStageRenderPath.metal
+  97143f007f727ca914562ffbbcf1f0d54bd0c4543ba565677a86c86498d68d53  MetalSplatter/Resources/ShaderCommon.h
+  1fed42cefb12679503fbef6361376182e8703c55c2954346d5a16ad9b9903e22  MetalSplatter/Resources/SingleStageRenderPath.metal
+  d840a4faf7fb0d3f2bbbd0d4a1ac89cbaad2354c019a8b1c1e750aa3c1ff616f  MetalSplatter/Resources/SplatProcessing.h
+  1c906d1b6f77cacce6c396c56c90a90b8c83ee51aca1e56d541467651a4591ad  MetalSplatter/Resources/SplatProcessing.metal
+  b454283d360e891a585360acc081e0317da41db2ae11e3c13a7aaec11c0eee3a  MetalSplatter/Sources/DepthCountingSort.swift (new — deviation 6)
+  fbe73dc26498e40997f1b3ed7cc7a06a5c488627c76273bd47a16b4b38089064  MetalSplatter/Sources/EncodedSplatPoint.swift
+  f78042f75d4505a7e767719bf4fe31bb0e530212be7ea20aa524c59b4d2ae0af  MetalSplatter/Sources/MetalBuffer.swift
+  bed475e146f3b69b03624dce6a722e1961d3855158c874068352402f41beaab6  MetalSplatter/Sources/MTLBufferPool.swift
+  d26e92baf037bd8d8ec8dd98e2df14e10b0cd5ac691465e52346a3116e3be837  MetalSplatter/Sources/SplatChunk.swift
+  67b50d0fddfbe57a9a6aa292c0ed3e0372140ee035e3bfb7f62dc62a9934ad09  MetalSplatter/Sources/SplatChunk+sortByLocality.swift
+  8d063bc0a5896dae2dd4c405b0f6dfff03ec2fdf525509264b13b2e805fd3a53  MetalSplatter/Sources/SplatRenderer.swift (modified — deviation 4)
+  f2abf8c2515b98d015844f223983869274de5e8b37b9cd14d14668738ea68789  MetalSplatter/Sources/SplatRenderer+Deprecated.swift
+  7928060c16763d6bb4f97ecf7c475447fbfe2071ea61607725aeaf10db89591c  MetalSplatter/Sources/SplatSorter.swift (modified — deviation 3)
+  c9aa9aac5518d2f2b0b0262af9aeb14521a6f50e4ad310a6ad17882094d65df9  MetalSplatter/Tests/ChunkTests.swift (modified — deviation 5)
+  55e10fee7889a7554a132c5ffbc653e8bb8d778e298643dabe230d0262bc6375  MetalSplatter/Tests/DepthCountingSortTests.swift (new — deviation 6)
+  b38cdd7e608409375f62e4609102c6985f1fff0b09eb5bdfb56bc5d11e1c7679  MetalSplatter/Tests/SplatSorterTests.swift
+  e9d72cd8ffa37eb12fad1a30a93e4933cf349c241f6209dfbd227f4b68d6ad25  MetalSplatter/Tests/SplatSorterTriggerTests.swift (new — deviation 6)
+  30a49a5a51d5a9e5fdad54c846c4b2f07774905e881ba000e28afc5bb3673c1f  Package.swift (modified — deviation 2)
+  59198bce483486287dd8e2924c52f048f7435fe26c2cb8b8503b8bc9fedead77  PLYIO/Sources/AsyncBufferingInputStream.swift
+  d3b1cbe89b492e86445dcd043cb2fe84a49a2ebca6411ffcb9168a369cb0ac96  PLYIO/Sources/AsyncBufferingOutputStream.swift
+  e82e5e6b14bc78197e33cb075dd17db7f0ff22dfe0c5fe37224f970c84c0d77b  PLYIO/Sources/BitPatternConvertible.swift
+  1939ee60919228e7bfb5797dfee441252167061e94a8ff613c741d9c58e9816b  PLYIO/Sources/ByteWidthProviding.swift
+  0000b6a1e90593511c17ddd76c86c39a23dc3fcd9096d85bcd864f2458eca402  PLYIO/Sources/DataConvertible.swift
+  4f7d1565ae9e4f9824073eeabf7a28bf8342319672ba27474156dc600b144e28  PLYIO/Sources/PLYElement.swift
+  fb43376510c1433ab154470655ea8a4adf8cb1ce1fe8cd9bcfc73d0cb0ec470b  PLYIO/Sources/PLYElement+ascii.swift
+  a598f48a1b1ef02879d5891bb49d4913539ca7e95f48d2dca6f9a1063ee08f71  PLYIO/Sources/PLYElement+binary.swift
+  3a919506a26177a74b7f138fc6237cf8eba6320d85003112c5deb414740c5646  PLYIO/Sources/PLYHeader.swift
+  db6a8033310745239204bc3325ff599abf3a45be162e556db0564d87b2244f27  PLYIO/Sources/PLYHeader+ascii.swift
+  51302846c6d306eff14513bd0957fe151d395ffd3ba4ba4ee54c57da3b36e53c  PLYIO/Sources/PLYReader.swift
+  918e0fdc7e563ff6702cd30baf1c3478ac9256e6fcfe4a7acf74b7cc7572f855  PLYIO/Sources/PLYWriter.swift
+  993a1cd28d78fdc72c344fa9a9ed12efc7061cf2d318d88b7324389dc9cc81b2  PLYIO/Sources/ReaderSource.swift
+  903553ccc08b5f7f7b5d487229a4caac2b705a3a9e7c19c23e4d8df093af0be3  PLYIO/Sources/UnsafeRawPointerConvertible.swift
+  e622d516023df7caa180feaa67271136fab1c27d50470a92d59ea6ac1ab40b1c  PLYIO/Sources/WriterDestination.swift
+  1db0677f2dc39a77f7ff36ac8e38ee108428c6f8ab771f20729e1275274d6573  PLYIO/TestData/beetle.ascii.ply
+  d56eca217f4d4469bd9a540719d61e25dc4d1dd0e259399f4c59b8a0ec162d64  PLYIO/TestData/beetle.binary.ply
+  05aba3ad4e06a6767b1b21af788c71e9181aae1ac05bbd8d36fa490ca96a573c  PLYIO/Tests/DataConvertibleTests.swift
+  26b16c204b410343e4fcf08fab4c3ddbd4268155fdceb1a8e558e7650d3f823d  PLYIO/Tests/PLYIOTests.swift
+  5f77f878680200667616ebd5220059686550d5d77f637ee4e467cea27124a396  PLYIO/Tests/UnsafeRawPointerConvertibleTests.swift
+  a30078a086186f07bcd0257390e1ac1e0fb1d3e204636d730ab6f1aec388f23e  README.md
+  9971b2523033f7fbb9004f0057ce89461138eb65867cc78515ef7dc211b13495  SplatIO/Sources/AutodetectSceneReader.swift
+  c857fdbb34b2577bc8d6797d6f3c4c2b67325637f8ea90bd2f045f73e8f4a9cd  SplatIO/Sources/Comparable+clamped.swift
+  02bfc4ff95cbc7918c32684cb5efb7c36f0c17c449cba13a80c3a321e1ab6700  SplatIO/Sources/DotSplatEncodedPoint.swift
+  8b9076d073f286013e45e5aa3ee18469abda5241fec5069cae7171a3e390767a  SplatIO/Sources/DotSplatSceneReader.swift
+  35b59b486d4db89805afbd461760a787a7d0a9db3ffc212e2117e0c8693d0d5c  SplatIO/Sources/DotSplatSceneWriter.swift
+  999d32827f81e66fba0e89c587660b7087f9f1dbaf01c9490300387a2e697a1e  SplatIO/Sources/SplatFileFormat.swift
+  4cfb694a0eb4acf6a924cf41d19e470140f73ca1face6b23a7cf7bd50ca907fa  SplatIO/Sources/SplatMemoryBuffer.swift
+  42e17e4462fb8389e4ab6101602f205e22df5043d417ea525f023402ad6b1d8f  SplatIO/Sources/SplatPLYConstants.swift
+  3b9c23ba6643dc1f174fbbf1d9cb9d850d1db0de53b92d370f9e9468d85cbb7e  SplatIO/Sources/SplatPLYSceneReader.swift
+  e4951cbdb2e42635e346e66fe1a8ababea3f0d744024bd4be56dd2a5ac2c7ddf  SplatIO/Sources/SplatPLYSceneWriter.swift
+  7dc13de20dd9573d85661c6588f9cbc0eb9bede9ebef177616a47666141df770  SplatIO/Sources/SplatPoint.swift
+  149cd1d5403abf4fb74e0b2825213251cb73345f2ecf8cda77278af27fc552f0  SplatIO/Sources/SplatPoint+CustomStringConvertible.swift
+  3791747ae4e3ad2d2dfbeb4de6f12a2ad424470129ee944177cab9bdc919b868  SplatIO/Sources/SplatSceneReader.swift
+  5407a7dbc123f1845ea759c8fb9951bce847a170a5575e3d72a6e8c5c4262dd7  SplatIO/Sources/SplatSceneWriter.swift
+  76bdd678b29a17905081713c7335dc2cd7056f3b67afce556d76b2ab9293926a  SplatIO/Sources/SPZSceneReader.swift
+  9fc071dfa978ba6619e3c0ddfab9649fdd87b4fdb80aea336d61a718f6dff6bb  SplatIO/Sources/SPZSceneWriter.swift
+  ef2ee6f0d80349bef6f3ba27b6b0d5b444c0c049c217d8e9884cf126505015c9  SplatIO/TestData/test-splat.3-points-from-train.ply
+  9c764962e6fa00ae6b728dd14797f10061e1e819a80b3856e662c94685e049cc  SplatIO/TestData/test-splat.3-points-from-train.splat
+  7b707314ebfbc3626418ea146db1e7654501b16e2937c8fba71e407133cc1c5c  SplatIO/TestData/test-splat.3-points-from-train.spz
+  5b55059514b39ce16d9283bc8f70b2e84aecaca4c3b1f392e6fbf78ef2b6639f  SplatIO/Tests/SplatIOTests.swift
+
+Version-selection rationale (viewer-sort Task 1):
+  - Vendors the exact tag the SplatXMetalTrainer app had been consuming as SPM exactVersion
+    1.0.1 — Task 1 is a reference switch only, and the contract is no behavior change (no
+    regression in the app gate). Newer versions are not tracked (a modified fork pinned to
+    1.0.1 — the same no-upstream-tracking principle as the rest of this repository).
+  - Vendoring motivation: the viewer z-order popping (comparison sort + re-sort every frame)
+    cannot be fixed through an SPM remote reference, so a modified fork is required
+    (internal design record 2026-07-21, decisions 1 and 2).
+  - Fetched by freshly cloning upstream tag 1.0.1, not by copying from the research/
+    reference clone (this repository's vendoring discipline).
+
+Deviations (relative to upstream tag 1.0.1 — this is a modified fork, so the list is
+exhaustive and updated with every Task):
+  1. Removed (surfaces the app does not consume): SampleApp/ (sample app), SampleBoxRenderer/
+     (debug renderer product+target), SplatConverter/ (conversion CLI product+target),
+     .gitignore (superseded by the repo-root .gitignore), .git.
+  2. Package.swift modified: removed the SampleBoxRenderer and SplatConverter product/target
+     declarations and the swift-argument-parser dependency (SplatConverter-only). Kept: the
+     products PLYIO, SplatIO, and MetalSplatter, the 3 targets + each testTarget (including
+     the TestData/Resources resource handling), the spz-swift dependency (from: 2.1.0 — SPM
+     remote kept), platforms and swiftLanguageModes unchanged.
+  3. [Task 2; the sort algorithm was revised in FIX 1] MetalSplatter/Sources/SplatSorter.swift
+     modified — sort algorithm and re-sort trigger:
+     a. The comparison sort in performSort phase 2 (an Array.sort closure, O(N log N)) → the
+        new DepthCountingSort.swift's 2-pass LSD radix sort over a float monotonic key, O(N)
+        (16-bit digits × 2 passes, stable counting over 65,536 buckets per pass,
+        back-to-front direction preserved).
+        [FIX 1 revision history] Task 2's 16-bit [min,max] linear-quantizing counting sort
+        broke down on the MCMC far outliers of a fully trained PLY (depth = squared
+        distance — garden measured d²max 1.9e8): the bucket width blew up to
+        range/65535 ≈ 3e3 (in d²), 99.8% of the scene collapsed into the single bucket 0,
+        and the sort was effectively a no-op (rendering in input = sortByLocality order) →
+        clipping-plane and occlusion breakdown.
+        FIX 1 replaced it with an exact sort: an IEEE754 bit-pattern total-order mapping
+        (negatives ~bits, positives bits|0x80000000) gives results position-for-position
+        identical to the comparison sort (ties = identical bit patterns; the stable scatter
+        preserves input order — deterministic). NaN/±Inf depths are placed deterministically
+        by their bit patterns (+Inf = farthest, -Inf = nearest, positive NaN = farther than
+        +Inf, negative NaN = nearer than -Inf — upstream's NaN placement is
+        nondeterministic). Scratch storage went from AoS (SplatReferenceAndDepth) to
+        parallel arrays (sortDepths/sortRefs). The depth metric (sortByDistance squared
+        distance / dot), the ChunkedSplatIndex 8B layout, and the buffer-ring publish
+        protocol are unchanged (all 3 shaders untouched).
+        Performance (synthetic, -O on this machine, phase2+3 median): 0.5M 2.0ms,
+        2M 10.5~11.4ms (+0.2~2.6ms vs. the quantizing counting sort; still dominant vs. the
+        upstream comparison sort's 34.4ms/153.7ms).
+     b. updateCameraPose's unconditional needsSort=true → a pose-threshold trigger: re-sort
+        only when, relative to the pose at which the last sort *started* (not the
+        frame-to-frame delta — this guarantees slow drift accumulates), view-direction
+        dot < 0.999 ∨ translation² > 1e-6 (1e-3 in absolute units). The goal is to stop the
+        endless re-sorting under a stationary camera (which permanently consumed one
+        P-core). Content-change-driven re-sorts (setChunks/addChunkToSort/
+        removeChunkFromSort/invalidateAllBuffers/withExclusiveAccess exit/the new
+        noteContentChanged) always fire, regardless of the threshold.
+     c. addSortCompletionHandler: if no sort is pending or in flight, force one sort — so
+        that even under a stationary camera the afterNextSort 1-shot handler is guaranteed
+        to fire in the near term (preserves the
+        addChunk(enabled:false)→afterNextSort→enable swap chain).
+     d. New noteContentChanged() (internal): unconditionally schedules a re-sort after a
+        content change.
+  4. [Task 2] MetalSplatter/Sources/SplatRenderer.swift modified: calls
+     sorter.noteContentChanged() when the outermost withChunkAccess exits (a single defer) —
+     guarantees a re-sort even for content changes that do not pass through the sorter API
+     directly (setChunkEnabled, in-place splat data updates, and the like). No public
+     API/signature changes.
+  5. [Task 2] MetalSplatter/Tests/ChunkTests.swift modified: an XCTSkip guard on
+     SplatRendererChunkTests — works around the problem (upstream structural) that CLI
+     `swift test` does not compile the .metal resources (no default.metallib in the resource
+     bundle), so the fatalError in SplatRenderer init kills the entire remaining suite. On
+     the xcodebuild path all of them run (measured: both paths pass).
+     [Record correction 2026-08-04, audit-cleanup Task 2] The "xcodebuild complement" above
+     was a one-off measurement at the time and had no wiring into any standing gate (the
+     app scheme's TestableReference lacked MetalSplatterTests — the 8 tests ran on no
+     standing path). The app project.yml gate scheme is now wired to run the package test
+     target MetalSplatterTests (51 tests) directly, so the 8 tests run at all times in the
+     app gate (473 total)
+     (measured: 8/8 Passed · 0 skip).
+  6. [Task 2, revised in FIX 1] New files: MetalSplatter/Sources/DepthCountingSort.swift
+     (rewritten in FIX 1 as the 2-pass radix over a float monotonic key — the class name and
+     the sort(depths:count:) and sortedIndices APIs remain as in Task 2),
+     MetalSplatter/Tests/DepthCountingSortTests.swift
+     (revised in FIX 1 — fully-trained-PLY outlier-distribution regression at N=100k,
+     position-for-position match with the comparison sort at N=100k, sign range, negative
+     determinism, all-elements-equal stability, empty input, NaN/±Inf determinism, storage
+     reuse — 10 tests. The regression test is substantiated on a distribution that fails
+     under the old quantizing implementation),
+     MetalSplatter/Tests/SplatSorterTriggerTests.swift (6 pose-threshold pure-function
+     tests + 6 trigger/handler contract tests).
+  7. All other sources (Swift/.metal/headers/TestData) are unmodified from upstream (Task 1
+     byte-identical comparison).
+
+Do not upgrade (pinned fork). When files change, update this file plus NOTICE and docs/provenance.md.

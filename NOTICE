@@ -1,0 +1,48 @@
+splatx-metal
+Copyright 2026 POSTMEDIA
+
+This product is licensed under the Apache License, Version 2.0.
+
+This product includes algorithms and code derived from the following
+Apache License 2.0 projects (derivation noted per-file in source headers):
+
+- gsplat (https://github.com/nerfstudio-project/gsplat)
+  Copyright: The Regents of the University of California (Nerfstudio Team),
+  NVIDIA CORPORATION & AFFILIATES.
+  Metal Shading Language kernels and training strategies (including the MCMC
+  densification strategy) are derived from gsplat's CUDA implementation and
+  PyTorch reference implementations.
+
+- brush (https://github.com/ArthurBrussee/brush)
+  Copyright: Arthur Brussee and brush contributors.
+  The GPU radix sort kernels (reduce-then-scan LSD radix sort) are derived
+  from brush's brush-sort crate (CubeCL/WGSL kernels, in turn based on the
+  FidelityFX Parallel Sort lineage via compute-shader-101) and reimplemented
+  in Metal Shading Language.
+
+This product vendors the following Apache License 2.0 component
+(license text preserved alongside the vendored sources):
+
+- metal-cpp (https://github.com/apple/metal-cpp)
+  Copyright Apple Inc.
+  Apple's official header-only C++ interface for Metal, vendored unmodified
+  under ThirdParty/metal-cpp (release metal-cpp_macOS26.4_iOS26.4).
+
+This product vendors the following MIT-licensed components
+(license text preserved alongside the vendored sources):
+
+- spz (https://github.com/nianticlabs/spz)
+  Copyright (c) 2024 Niantic Labs.
+  SPZ gaussian splat format C++ library (load-spz/splat-types/splat-c-types),
+  vendored unmodified under ThirdParty/spz (v2.1.0, commit 2cf0be0 — last
+  gzip/zlib-only release; see ThirdParty/spz/VERSION.txt).
+
+- MetalSplatter (https://github.com/scier/MetalSplatter)
+  Copyright (c) 2026 Sean Cier.
+  Metal 3D Gaussian Splat renderer and splat file I/O Swift package
+  (MetalSplatter, SplatIO, and PLYIO modules), vendored under
+  ThirdParty/MetalSplatter as a locally modified fork of release 1.0.1
+  (commit 71ff248; modifications listed in ThirdParty/MetalSplatter/VERSION.txt).
+  Its dependency spz-swift (https://github.com/scier/spz-swift, MIT,
+  Copyright (c) 2026 Sean Cier) is consumed via Swift Package Manager,
+  not vendored.

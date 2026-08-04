@@ -1,0 +1,74 @@
+# CI — the GPU-free tier.
+#
+# Scope: everything that is guaranteed to work on a GitHub-hosted macOS
+# runner WITHOUT a real Apple-Silicon GPU:
+#   1. `swift build`               — full compile of the C++/Swift stack.
+#   2. `tools/build_metallib.sh`   — offline kernel compilation. This is not
+#      a token step: the kernels compile through two mutually-exclusive
+#      paths (offline per-file TUs vs runtime single-TU concatenation), and
+#      symbol-collision / missing-include regressions surface in only one of
+#      them. Offline compilation catches half of that class with no GPU.
+#   3. `tools/build_xcframework.sh` — direct clang++ distribution build
+#      (independently maintained include/link flags; breaks silently if not
+#      exercised).
+#
+# The numerical test suites need a real GPU and run in full-gate.yml on
+# maintainer hardware. Whether hosted runners could run more than this is
+# probed once by probe.yml (see its header) — do not extend this workflow
+# past compilation until that probe has passed.
+#
+# The Metal toolchain is a separate ~700 MB download since Xcode 26, so it
+# is cached via export/import. If the cache mechanics fail on a runner
+# image update, the fallback path (plain -downloadComponent) still works —
+# it is just slower.
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 26
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.app || sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
+          swift --version
+
+      - name: Restore Metal toolchain cache
+        id: metal-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/metal-toolchain
+          key: metal-toolchain-${{ runner.os }}-xcode26
+
+      - name: Install Metal toolchain
+        run: |
+          if xcrun -sdk macosx metal --version 2>/dev/null; then
+            echo "Metal toolchain already present on image"
+          elif [ -d ~/metal-toolchain ] && xcodebuild -importComponent MetalToolchain -importPath ~/metal-toolchain 2>/dev/null; then
+            echo "Imported Metal toolchain from cache"
+          else
+            xcodebuild -downloadComponent MetalToolchain
+            mkdir -p ~/metal-toolchain
+            xcodebuild -exportComponent MetalToolchain -exportPath ~/metal-toolchain || true
+          fi
+          xcrun -sdk macosx metal --version
+
+      - name: Build (SwiftPM)
+        run: swift build
+
+      - name: Compile kernels offline (metallib, both platforms)
+        run: |
+          tools/build_metallib.sh
+          tools/build_metallib.sh --ios
+
+      - name: Build XCFramework (clang++ direct path)
+        run: tools/build_xcframework.sh

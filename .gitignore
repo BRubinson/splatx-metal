@@ -1,0 +1,13 @@
+# .gitignore for the public repository.
+# (The release assembly installs this file as the repository root .gitignore.)
+
+.DS_Store
+build/
+.build/
+.swiftpm/
+*.xcuserstate
+__pycache__/
+tools/.venv/
+# Generated Xcode project (xcodegen) and local signing configuration.
+apps/SplatXMetalTrainer/*.xcodeproj
+apps/SplatXMetalTrainer/Signing.xcconfig

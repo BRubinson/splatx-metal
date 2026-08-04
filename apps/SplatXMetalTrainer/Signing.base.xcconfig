@@ -1,0 +1,9 @@
+// Signing configuration entry point (committed — App Store Task 2). project.yml configFiles
+// wires this file as the baseConfiguration of both targets. The real team ID lives in the
+// gitignored Signing.xcconfig (template: Signing.xcconfig.example); this file only does an
+// optional include — Xcode silently ignores `#include?` when the file is absent, so builds
+// do not break on a fresh clone (unsigned gate CODE_SIGNING_ALLOWED=NO).
+// Caution: if the baseConfiguration file itself is missing, xcodebuild fails with the
+// "Unable to open base configuration reference file" error (measured 2026-07-27) — do not
+// delete this wrapper or move it into gitignore.
+#include? "Signing.xcconfig"

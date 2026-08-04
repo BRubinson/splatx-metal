@@ -1,0 +1,25 @@
+<!doctype html>
+<!-- App Store screenshot frame template (2880×1800).
+     compose.sh substitutes {{IMAGE}}/{{HEADLINE}}/{{SUBLINE}} and renders it with headless Chrome.
+     The raw screenshot is contain-fitted into the slot at any aspect ratio. -->
+<meta charset="utf-8">
+<style>
+  html,body{margin:0;width:2880px;height:1800px;overflow:hidden}
+  body{
+    background:
+      radial-gradient(1200px 700px at 18% 8%, rgba(30,154,85,.26), transparent 70%),
+      radial-gradient(1100px 650px at 85% 95%, rgba(71,224,196,.13), transparent 70%),
+      radial-gradient(1600px 1100px at 50% 30%, #14181E 0%, #0B0E12 60%, #060809 100%);
+    font-family:-apple-system,"SF Pro Display","Apple SD Gothic Neo",sans-serif;
+    display:flex;flex-direction:column;align-items:center}
+  .headline{margin-top:96px;font-size:104px;font-weight:700;letter-spacing:-.015em;
+    color:#F2F5F8;text-align:center;max-width:2300px;line-height:1.15}
+  .subline{margin-top:28px;font-size:44px;font-weight:400;color:#8B95A1;text-align:center}
+  .shot{margin-top:72px;width:2320px;height:1310px;display:flex;align-items:flex-start;justify-content:center}
+  .shot img{max-width:100%;max-height:100%;border-radius:24px;
+    border:1px solid rgba(255,255,255,.09);
+    box-shadow:0 60px 140px rgba(0,0,0,.62), 0 8px 30px rgba(0,0,0,.5)}
+</style>
+<div class="headline">{{HEADLINE}}</div>
+<div class="subline">{{SUBLINE}}</div>
+<div class="shot"><img src="{{IMAGE}}" alt=""></div>

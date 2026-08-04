@@ -1,0 +1,80 @@
+{
+  "C": 3,
+  "C1": 0.0001,
+  "C2": 0.0009,
+  "I": 1,
+  "compare": "toleranced",
+  "golden_source": "gsplat@77ab983:gsplat/losses.py:84-151 (the window and SSIM formulas) + :185 (the fused_ssim padding=\"valid\" call convention) \u2014 an original pure-torch f64 reproduction (the fused-ssim code was neither cloned nor touched)",
+  "gsplat_convention": {
+    "grad": "only img1 (the render) is differentiated (the losses.py:184 guard) \u2014 v_img2 is not stored",
+    "layout": "the gsplat call is NCHW (the trainer does [B,H,W,C]\u2192permute(0,3,1,2)) \u2014 the fixture is stored in the splatx image convention [I,H,W,C], and only the golden computation transposes to NCHW",
+    "loss": "lerp(l1, 1-ssim, \u03bb) = (1-\u03bb)\u00b7l1 + \u03bb\u00b7(1-ssim), \u03bb=ssim_lambda=0.2 (simple_trainer.py:171,961)"
+  },
+  "hand_check": {
+    "map_y0_x0_ch0": 0.9715708515181268,
+    "map_y0_x0_ch1": 0.9428351442717623,
+    "map_y0_x0_ch2": 0.9868144970007803,
+    "map_y13_x5_ch0": 0.6574313862319053,
+    "map_y13_x5_ch1": 0.34839441674397087,
+    "map_y13_x5_ch2": 0.6791432862969617,
+    "map_y7_x7_ch0": 0.47698512701977913,
+    "map_y7_x7_ch1": 0.4257730303222188,
+    "map_y7_x7_ch2": 0.44081974821270514
+  },
+  "height": 24,
+  "lineage": {
+    "img1": "the f32 crop [0, 4:28, 4:28, :] of raster_small/bg/render_colors.sxt (element bytes preserved) \u2014 the render side of training",
+    "img2": "synthesized GT: clamp(0.88\u00b7img1 + 0.06 + 0.06\u00b7sin(2\u03c0x/12)cos(2\u03c0y/16) + 0.03\u00b7randn(seed 37), 0, 1) \u2014 f32 arithmetic"
+  },
+  "map_height": 14,
+  "map_width": 14,
+  "note": "The bwd upstream is fixed at the scalar 1 (loss = 1 - mean(ssim_map) \u2014 the authoritative training direction; dump_backward is not used and \u03bb=0.2 is not applied \u2014 the Trainer scales it when combining). ssim_map covers the valid region only (map[p] = window start p, center p+5). Self-verification: ssim(a,a)=1 / symmetry is bit-identical / a Python scalar oracle at 9 points / the bwd derivation of spec 08 checked against autograd (rtol 1e-10) / finite differences at 4 coordinates / gradients reach every pixel.",
+  "padding": "valid",
+  "seeds": {
+    "input": 37
+  },
+  "sigma": 1.5,
+  "tensors": {
+    "grad_inputs": [
+      "v_img1"
+    ],
+    "inputs": [
+      "img1",
+      "img2"
+    ],
+    "outputs": [
+      "ssim",
+      "ssim_map"
+    ]
+  },
+  "tolerances": {
+    "ssim": {
+      "atol": 1e-06,
+      "rtol": 5e-05
+    },
+    "ssim_map": {
+      "atol": 1e-05,
+      "rtol": 0.001
+    },
+    "v_img1": {
+      "atol": 1e-06,
+      "rel_l2": 0.001,
+      "rtol": 0.001
+    }
+  },
+  "width": 24,
+  "window_size": 11,
+  "window_taps_f32": [
+    0.001028380123898387,
+    0.0075987582094967365,
+    0.036000773310661316,
+    0.10936068743467331,
+    0.21300554275512695,
+    0.26601171493530273,
+    0.21300554275512695,
+    0.10936068743467331,
+    0.036000773310661316,
+    0.0075987582094967365,
+    0.001028380123898387
+  ]
+}

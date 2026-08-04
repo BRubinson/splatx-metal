@@ -1,0 +1,155 @@
+{
+  "I": 1,
+  "N": 8,
+  "cases": "(a) g0..g2 overlapping (clamp + early termination) (b) g4 small (c) g3 straddling 2 tiles (d) g6 half off-screen (e) tile (1,1) empty (f) g5 always invalid (g) g7 anisotropic B=0.15",
+  "cdim": 3,
+  "compare": "toleranced",
+  "golden_source": "gen_fixtures.py:_rasterize_reference (an original pure-torch f64 implementation \u2014 gsplat _rasterize_to_pixels depends on CUDA/nerfacc and cannot be used on macOS, 07). The formulas and constants = gsplat@77ab983 RasterizeToPixels3DGSDevice.cuh:44-55 + SerialBatchFwd.cu:179-296 + Common.h:97-114 (spec 05).",
+  "hand_check": {
+    "pixel_x24_y24_empty_tile": {
+      "isect_range": [
+        9,
+        9
+      ],
+      "last_ids": 0,
+      "render_alphas": 0.0,
+      "render_colors": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "tile": [
+        1,
+        1
+      ],
+      "trace": "empty tile \u2014 nobg: 0, bg: the background is applied globally (07 Correction 4)"
+    },
+    "pixel_x24_y8": {
+      "isect_range": [
+        4,
+        6
+      ],
+      "last_ids": 5,
+      "render_alphas": 0.8999999761581421,
+      "render_colors": [
+        0.0,
+        0.8999999761581421,
+        0.8999999761581421
+      ],
+      "tile": [
+        1,
+        0
+      ],
+      "trace": "g5 (depth 1.3) first: opac 0.003<1/255 \u2192 invalid, skipped (last not updated); g4: alpha=f32(0.9), w=alpha \u2192 last=4+1=5"
+    },
+    "pixel_x8_y8": {
+      "isect_range": [
+        0,
+        4
+      ],
+      "last_ids": 1,
+      "render_alphas": 0.9994999998807907,
+      "render_colors": [
+        0.99,
+        0.009499999880790718,
+        0.0
+      ],
+      "tile": [
+        0,
+        0
+      ],
+      "trace": "g0: alpha=min(0.99,0.995)=0.99 (clamped), next_T=0.01>1e-4 \u2192 w0=0.99; g1: alpha=f32(0.95), next_T\u22485.0e-4>1e-4 \u2192 w1=alpha\u00b70.01; g2: next_T\u22482.5e-5<=1e-4 \u2192 exclusive termination (g2 not included); g3: terminated before it is reached (note: alpha\u22482.81e-3<1/255 makes it invalid anyway)"
+    }
+  },
+  "has_background": 0,
+  "height": 32,
+  "isect": {
+    "flatten_ids": [
+      0,
+      1,
+      2,
+      3,
+      5,
+      4,
+      6,
+      7,
+      3
+    ],
+    "note": "Hand-made depths give unique keys \u2014 per-tile front-to-back = (0,0):[g0,g1,g2,g3] (1,0):[g5,g4] (0,1):[g6,g7,g3] (1,1):empty",
+    "offsets_flat": [
+      0,
+      4,
+      6,
+      9
+    ]
+  },
+  "masks": 0,
+  "n_isects": 9,
+  "note": "Render equation: sigma=0.5(A dx\u00b2+C dy\u00b2)+B dx dy (delta=mean-pixel_center, center=+0.5), alpha=min(0.99, opac\u00b7exp(-sigma)), valid=!(sigma<0 || alpha<1/255), early termination at next_T=T(1-alpha)<=1e-4 **exclusive** (the triggering Gaussian is not included, Fwd.cu:246-251). last_ids = the **absolute isect index** (relative to flatten_ids) of the last contributing Gaussian, or 0 when nothing contributed (a dual-purpose encoding \u2014 because MAX_ALPHA=0.99 the first Gaussian can never cross the threshold, so there is no contamination, Fwd.cu:186/261/293). The background is applied globally in one pass outside the tile loop: render_colors += (1-render_alphas)\u00b7bg (07 Correction 4 \u2014 bg is written to the in-bounds pixels of empty tiles as well). masks=None is fixed (07 Correction 6). flatten_ids is the **sorted golden** (the isect sort contract, 03), and isect_offsets is the global [I,TH,TW] cumulative sum. Comparison: render_colors/render_alphas with tolerances, last_ids **exact** (the flake policy at the threshold boundary is 07 open question #5 \u2014 to be decided after measurement). The Metal bwd test feeds this fixture's fwd goldens (render_alphas/last_ids) in as input to block fwd error propagation (07). bwd: inject v_render_colors/v_render_alphas \u2192 v_means2d/v_conics/v_colors/v_opacities (last_ids is not differentiated). A Gaussian with the MAX_ALPHA clamp active contributes 0 to v_conics/v_means2d/v_opacities and only v_colors survives (the clamp_max autograd \u2261 the Bwd.cu:259 gate). Self-verification: (a) T decays monotonically and the surviving T>1e-4, (b) the render_alphas==1-T_final identity (f64 1e-12), (c) an all-pixel comparison against a serial per-pixel scalar oracle (a literal translation of the CUDA fwd), (d) the raster_small hand-check assertions. The total fixtures size cap was relaxed to < 2MB by approval (the 1c Task 2 brief) \u2014 the raster image tensors [I,H,W,{3,1}] (render/v_render) dominate the size. The nobg and bg variants share the same input and grad seeds (byte-identical upstream) \u2014 v_colors is identical between the variants, and only v_means2d/v_conics/v_opacities diverge through the bg term (v_alpha).",
+  "seeds": {
+    "grad": 1031
+  },
+  "tensors": {
+    "grad_inputs": [
+      "v_means2d",
+      "v_conics",
+      "v_colors",
+      "v_opacities"
+    ],
+    "grad_outputs": [
+      "v_render_colors",
+      "v_render_alphas"
+    ],
+    "inputs": [
+      "means2d",
+      "conics",
+      "colors",
+      "opacities",
+      "flatten_ids",
+      "isect_offsets"
+    ],
+    "inputs_aux": [
+      "radii",
+      "depths"
+    ],
+    "outputs": [
+      "render_colors",
+      "render_alphas",
+      "last_ids"
+    ]
+  },
+  "tile_height": 2,
+  "tile_size": 16,
+  "tile_width": 2,
+  "tolerances": {
+    "render_alphas": {
+      "atol": 1e-05,
+      "rtol": 0.0001
+    },
+    "render_colors": {
+      "atol": 1e-05,
+      "rtol": 0.0001
+    },
+    "v_colors": {
+      "atol": 1e-06,
+      "rel_l2": 0.001,
+      "rtol": 0.001
+    },
+    "v_conics": {
+      "atol": 1e-05,
+      "rel_l2": 0.001,
+      "rtol": 0.005
+    },
+    "v_means2d": {
+      "atol": 1e-05,
+      "rel_l2": 0.001,
+      "rtol": 0.005
+    },
+    "v_opacities": {
+      "atol": 1e-05,
+      "rel_l2": 0.001,
+      "rtol": 0.005
+    }
+  },
+  "width": 32
+}

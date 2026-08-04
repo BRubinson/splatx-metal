@@ -1,0 +1,15 @@
+{
+  "originHash" : "30a49a5a51d5a9e5fdad54c846c4b2f07774905e881ba000e28afc5bb3673c1f",
+  "pins" : [
+    {
+      "identity" : "spz-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/scier/spz-swift.git",
+      "state" : {
+        "revision" : "e2410c91bceba2539c11157ad92e488ef6e16416",
+        "version" : "2.1.0"
+      }
+    }
+  ],
+  "version" : 3
+}

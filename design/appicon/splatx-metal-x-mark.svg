@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+<!-- SplatX Metal bimetal X mark standalone (transparent background) — same render as app icon F3. User-approved 2026-07-27. -->
+<defs><linearGradient id="ct" x1="0" y1="105" x2="0" y2="128" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#FDFEFF"/><stop offset=".3" stop-color="#DCE5EC"/>
+    <stop offset=".62" stop-color="#AAB6C1"/><stop offset=".84" stop-color="#8794A0"/>
+    <stop offset="1" stop-color="#66727E"/></linearGradient>
+  <linearGradient id="cu" x1="0" y1="128" x2="0" y2="151" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#39434D"/><stop offset=".3" stop-color="#2A323B"/>
+    <stop offset=".62" stop-color="#57626D"/><stop offset=".85" stop-color="#3E4750"/>
+    <stop offset="1" stop-color="#1F262D"/></linearGradient>
+  <linearGradient id="gt" x1="0" y1="105" x2="0" y2="128" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#F4FFE0"/><stop offset=".28" stop-color="#B9F07E"/>
+    <stop offset=".62" stop-color="#7CE04A"/><stop offset=".86" stop-color="#4CBE45"/>
+    <stop offset="1" stop-color="#2E9D43"/></linearGradient>
+  <linearGradient id="gu" x1="0" y1="128" x2="0" y2="151" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#0F8A50"/><stop offset=".3" stop-color="#0A6B3E"/>
+    <stop offset=".55" stop-color="#129959"/><stop offset=".8" stop-color="#095C34"/>
+    <stop offset="1" stop-color="#04351E"/></linearGradient>
+  <filter id="sB" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="4.5"/></filter>
+  <filter id="sA" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="1.8"/></filter>
+  <clipPath id="ccX"><path d="M 29 128 Q 128 105 227 128 Q 128 151 29 128 Z" transform="rotate(-45 128 128)"/></clipPath></defs>
+<g transform="scale(4)"><g transform="translate(0,3)" opacity=".32" filter="url(#sB)">
+      <path d="M 29 128 Q 128 105 227 128 Q 128 151 29 128 Z" transform="rotate(45 128 128)"/>
+      <path d="M 29 128 Q 128 105 227 128 Q 128 151 29 128 Z" transform="rotate(-45 128 128)"/>
+    </g>
+    <g transform="rotate(-45 128 128)">
+      <path d="M 29 128 Q 128 105 227 128 Z" fill="url(#ct)"/>
+      <path d="M 29 128 Q 128 151 227 128 Z" fill="url(#cu)"/>
+      <path d="M 44 128 L 212 128" stroke="#FFFFFF" stroke-width="1.1" stroke-linecap="round" opacity=".8"/>
+    </g>
+    <g clip-path="url(#ccX)"><circle cx="128" cy="128" r="32" fill="#000" opacity=".42" filter="url(#sA)"/></g>
+    <g transform="rotate(45 128 128)">
+      <path d="M 29 128 Q 128 105 227 128 Z" fill="url(#gt)"/>
+      <path d="M 29 128 Q 128 151 227 128 Z" fill="url(#gu)"/>
+      <path d="M 44 128 L 212 128" stroke="#F4FFE0" stroke-width="1.1" stroke-linecap="round" opacity=".85"/>
+    </g></g>
+</svg>

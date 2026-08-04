@@ -1,0 +1,21 @@
+{
+  "N": 64,
+  "compare": "toleranced",
+  "golden_source": "gsplat@77ab983:RelocationCUDA.cu:35-79 (the formula reproduced by hand in f32) + strategy/mcmc.py:95-100 (binoms LUT)",
+  "min_opacity": 0.005,
+  "n_max": 51,
+  "note": "The clamp (min_opacity, 1-FLT_EPSILON) comes before the scale computation. denom_sum is a sequential f32 accumulation in ascending (i,k) order \u2014 the same order as CPU and Metal. binoms is bit-identical to the C++ make_binoms_lut by contract (memcmp in the test). Boundaries: [0]/[3] hit the lower clamp, [1] hits the upper clamp (o=1.0, ratio=1), and [3] runs the maximum loop at ratio=51. ratios holds the values pre-clamped to 1..n_max (a host contract).",
+  "seeds": {
+    "input": 35
+  },
+  "tolerances": {
+    "new_opacities": {
+      "atol": 1e-07,
+      "rtol": 1e-06
+    },
+    "new_scales": {
+      "atol": 1e-06,
+      "rtol": 0.0001
+    }
+  }
+}

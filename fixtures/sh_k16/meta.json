@@ -1,0 +1,73 @@
+{
+  "B": 2,
+  "D": 3,
+  "K": 16,
+  "N": 64,
+  "compare": "toleranced",
+  "degrees_to_use_bwd": 3,
+  "golden_source": "gsplat@77ab983:_torch_impl.py:_spherical_harmonics",
+  "note": "masks=(radii>0).all(-1) [B,N] uint8. In colors_deg{d} the mask=0 slots are 0 (the kernel skips writing them \u2192 the output buffer is zero-initialized and then compared in full). v_colors is stored after multiplication by the mask. v_means[N,3] = v_dirs[B,N,3].sum(over the B axis) (the chain gradient of dirs = means - campos).",
+  "seeds": {
+    "grad": 1013,
+    "input": 13
+  },
+  "tensors": {
+    "grad_inputs": [
+      "v_coeffs",
+      "v_dirs",
+      "v_means"
+    ],
+    "grad_outputs": [
+      "v_colors"
+    ],
+    "inputs": [
+      "dirs",
+      "coeffs",
+      "masks"
+    ],
+    "inputs_aux": [
+      "means",
+      "campos",
+      "radii"
+    ],
+    "outputs": [
+      "colors_deg0",
+      "colors_deg1",
+      "colors_deg2",
+      "colors_deg3"
+    ]
+  },
+  "tolerances": {
+    "colors_deg0": {
+      "atol": 1e-06,
+      "rtol": 1e-05
+    },
+    "colors_deg1": {
+      "atol": 1e-06,
+      "rtol": 1e-05
+    },
+    "colors_deg2": {
+      "atol": 1e-06,
+      "rtol": 1e-05
+    },
+    "colors_deg3": {
+      "atol": 1e-06,
+      "rtol": 1e-05
+    },
+    "v_coeffs": {
+      "atol": 1e-06,
+      "rel_l2": 0.0001,
+      "rtol": 0.0001
+    },
+    "v_dirs": {
+      "atol": 1e-06,
+      "rel_l2": 0.0001,
+      "rtol": 0.0001
+    },
+    "v_means": {
+      "atol": 1e-06,
+      "rel_l2": 0.0001,
+      "rtol": 0.0001
+    }
+  }
+}

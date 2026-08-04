@@ -1,0 +1,56 @@
+# Full gate — the GPU tier. Runs the complete numerical suites, which
+# require a real Apple-Silicon GPU (the backend asserts
+# threadExecutionWidth == 32 and refuses paravirtualized devices).
+#
+# SECURITY INVARIANT — do not weaken:
+#   This workflow must NEVER have a `pull_request` trigger. It targets a
+#   self-hosted runner; a PR trigger would execute untrusted external code
+#   on maintainer hardware. `workflow_dispatch` + `push: main` (maintainer
+#   -reviewed code only) is the ceiling.
+#
+# CURRENT STATUS: no self-hosted runner is registered yet. Until one
+# exists, this gate is executed manually on maintainer hardware (the same
+# commands as below), and the `push: main` trigger stays commented out so
+# pushes do not queue jobs that no runner will pick up. When a runner is
+# registered: uncomment the push trigger, and keep the runner on an
+# isolated machine (it still runs only maintainer-reviewed code, but
+# defense in depth costs little).
+
+name: full-gate
+
+on:
+  workflow_dispatch:
+  # Enable after a self-hosted runner is registered:
+  # push:
+  #   branches: [main]
+
+jobs:
+  full-gate:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: swift build
+
+      - name: C++ core suite — runtime kernel compilation path
+        run: swift run splatx-core-tests
+
+      - name: C++ core suite — offline metallib path
+        run: |
+          tools/build_metallib.sh
+          SPLATX_TEST_METALLIB=build/splatx.metallib swift run splatx-core-tests
+
+      - name: Swift package tests
+        run: swift test
+
+      - name: macOS app tests (unsigned)
+        run: |
+          cd apps/SplatXMetalTrainer
+          xcodegen generate
+          xcodebuild test -project SplatXMetalTrainer.xcodeproj -scheme SplatXMetalTrainer \
+            -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO
+
+      - name: XCFramework
+        run: tools/build_xcframework.sh

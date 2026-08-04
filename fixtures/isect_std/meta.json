@@ -1,0 +1,40 @@
+{
+  "I": 2,
+  "N": 128,
+  "chained_from": "proj_fully_fused (a byte-identical copy of the radii/means2d/depths fwd goldens, seed 7)",
+  "compare": "exact",
+  "golden_source": "gsplat@77ab983:_torch_impl.py:_isect_tiles(sort=False) + np.lexsort + _isect_offset_encode",
+  "height": 120,
+  "image_n_bits": 1,
+  "key_encoding": "isect_id(u64) = image_id << (32+tile_n_bits) | tile_id << 32 | f32bits(depth); tile_id = tile_y*tile_width + tile_x; tile_n_bits = bits_for_count(tile_width*tile_height), image_n_bits = bits_for_count(I). SXT does not support int64 \u2192 stored split into int32 lo (low 32 bits = the depth f32 bits reinterpreted) and hi (high 32 bits = image|tile) (D3).",
+  "n_isects": 5097,
+  "n_tiles": 80,
+  "note": "torch _isect_tiles covers only the AABB fallback path (07 Correction 2) \u2014 it is not an AccuTile (conics/opacities) golden. The Metal isect kernel is verified under the AABB contract (conics/opacities not passed). isect_ids_lo/hi and flatten_ids are the raw output in emit order (2-pass pass2), and *_sorted are the sorted goldens. The keys of this fixture contain no ties (asserted) \u2014 stable-sort verification under ties is isect_ties. All tensors are compared exact (int/bit).",
+  "seeds": {
+    "input": 7
+  },
+  "sort_contract": "Ascending **stable** sort on the ulong(u64) key (the sort contract, 03). The golden is np.lexsort((lo,hi)) \u2014 the equivalence baseline is the CPU std::stable_sort(ulong key). torch.sort is not used (stability is not guaranteed).",
+  "tensors": {
+    "inputs": [
+      "means2d",
+      "radii",
+      "depths"
+    ],
+    "outputs": [
+      "tiles_per_gauss",
+      "isect_ids_lo",
+      "isect_ids_hi",
+      "flatten_ids",
+      "isect_ids_sorted_lo",
+      "isect_ids_sorted_hi",
+      "flatten_ids_sorted",
+      "offsets"
+    ]
+  },
+  "tile_height": 8,
+  "tile_n_bits": 7,
+  "tile_size": 16,
+  "tile_width": 10,
+  "tolerances": {},
+  "width": 160
+}

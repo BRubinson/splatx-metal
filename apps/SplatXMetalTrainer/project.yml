@@ -1,0 +1,272 @@
+name: SplatXMetalTrainer
+options:
+  bundleIdPrefix: com.postmedia
+  deploymentTarget:
+    macOS: "26.0"
+# Public-pipeline Task 8: pinned to Apple Silicon only (an irreversible App Store item).
+# The default with ARCHS unset is `arm64 x86_64` (universal), but on the Intel Macs that
+# macOS 26 still supports, training fails immediately with the threadExecutionWidth != 32
+# throw — Intel support is structurally impossible. Per Apple policy, "once released as
+# universal you cannot revert to Apple Silicon only" (before the first submission is the
+# only window). No EXCLUDED_ARCHS — the explicit ARCHS is canonical, and keeping a
+# subtractive mechanism alongside it only adds a management surface where the two values
+# can drift apart.
+settings:
+  base:
+    ARCHS: arm64
+packages:
+  splatx-metal:
+    path: ../..
+  # Viewer-alignment Task 1: SPM remote (url exactVersion 1.0.1) → local reference to the
+  # vendored fork in this repo. Same snapshot as tag 1.0.1 — the paperwork is canonical in
+  # ThirdParty/MetalSplatter/VERSION.txt.
+  MetalSplatter:
+    path: ../../ThirdParty/MetalSplatter
+targets:
+  SplatXMetalTrainer:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources
+      # App Store Task 1: app icon asset catalog (derived from the F3 master render —
+      # canonical source design/appicon/splatx-trainer-icon-f3.svg). xcodegen places the
+      # .xcassets into the Resources build phase and actool compiles it into Assets.car.
+      - path: Assets.xcassets
+      # App Store Task 1b: the two document icon icns files (doc-ply/doc-spz — 1024 renders
+      # of the canonical design/docicon/*.svg converted with sips+iconutil).
+      # CFBundleTypeIconFile looks them up by name in the bundle Resources, so
+      # resource-phase placement is required.
+      - path: Resources
+        buildPhase: resources
+      # Cinema FIX 5: default brand watermark source — references the canonical
+      # design/wordmark file in the repo by relative path (no app-local copy duplicated in
+      # git — same rationale as the SplatXBench blue-folder reference). It is copied into
+      # the bundle under its @2x-suffixed name as-is (WatermarkSeederTests pins the load
+      # name), and saved under the neutral name splatx-metal-watermark.png when copied into
+      # a project (WatermarkSeeder).
+      - path: ../../design/wordmark/splatx-metal-lockup-dark@2x.png
+        buildPhase: resources
+    # File association (app round 5 item 5): document type declarations so Finder can open
+    # .ply/.spz with this app. xcodegen generates the Info.plist file from these properties
+    # (rewritten on every generate — gitignored) and designates it via INFOPLIST_FILE. For
+    # how it merges with GENERATE_INFOPLIST_FILE: YES, see the app round 5 Task 2
+    # measurement report — verified with plutil that the INFOPLIST_KEY_*/PRODUCT_NAME-derived
+    # keys are preserved.
+    info:
+      path: Info.plist
+      properties:
+        # PLY directly references the system (CoreTypes) declaration
+        # public.polygon-file-format (no import needed — measured on macOS 26: active,
+        # exported, core). SPZ has no public UTI, so it is an imported declaration — the
+        # identifier reuses com.splatx.spz, already declared by the iOS capture app of the
+        # same ecosystem (UTI unification across same-ecosystem apps — avoids two identifiers
+        # competing for the same extension).
+        # LSHandlerRank Alternate: a Viewer role that does not steal other apps' default
+        # association. CFBundleTypeIconFile (App Store Task 1b): Finder document icons —
+        # references doc-ply.icns/doc-spz.icns in the bundle Resources by extension-less
+        # name (the Resources phase in sources above).
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Polygon File Format
+            CFBundleTypeRole: Viewer
+            CFBundleTypeIconFile: doc-ply
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.polygon-file-format]
+          - CFBundleTypeName: Compressed Gaussian Splat
+            CFBundleTypeRole: Viewer
+            CFBundleTypeIconFile: doc-spz
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [com.splatx.spz]
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: com.splatx.spz
+            UTTypeDescription: Compressed Gaussian Splat
+            UTTypeConformsTo: [public.data]
+            UTTypeTagSpecification:
+              public.filename-extension: [spz]
+        # App Store Task 2: xcodegen's default generation hardcoded CFBundleShortVersionString
+        # "1.0", conflicting with MARKETING_VERSION (audit §3) — corrected to build-setting
+        # references. For App Store Connect the submission unit is canonically
+        # CFBundleShortVersionString, and CURRENT_PROJECT_VERSION is bumped on every
+        # resubmission. $(...) is substituted with build setting values during INFOPLIST_FILE
+        # preprocessing.
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+    # App Store Task 2: App Sandbox entitlements required for the Mac App Store. xcodegen
+    # generates the SplatXMetalTrainer.entitlements file on generate and wires it via
+    # CODE_SIGN_ENTITLEMENTS (a generated artifact on par with Info.plist — anchored in the
+    # app .gitignore; do not edit directly).
+    # user-selected.read-write alone satisfies both Import (NSOpenPanel read) and Export
+    # (NSSavePanel write) — the copy into the project folder completes right at panel
+    # selection, and there is no re-access of originals and no stored absolute paths, so no
+    # security-scoped bookmarks are needed (internal audit measurement record §1/§2).
+    #
+    # Behavior change (signed Xcode Run/Archive only — sandbox applied):
+    #   the project storage root ~/SplatXMetalTrainer/Projects moves to the container home
+    #   ~/Library/Containers/com.postmedia.splatx-metal-trainer/Data/SplatXMetalTrainer/Projects.
+    #   Real-home data created by earlier development builds is recovered by a "manual move"
+    #   into the container — manifest/RunRecord are all project-relative paths, so a folder
+    #   move alone is a complete recovery (audit §1①(a)).
+    #   Under the sandbox there is no permission to read the real home at all, so automatic
+    #   migration code cannot exist.
+    # The test gate (CODE_SIGNING_ALLOWED=NO) skips signing = no entitlements embedded =
+    # non-sandboxed, real home as before — the gate is unchanged (Task 2 measurement: 255
+    # tests, no regression). Note therefore that the signed Run (container) and the unsigned
+    # tests (real home) have different project roots.
+#   (Running via ⌘U in the Xcode IDE signs the host app, so tests also run in the container — this note applies to the CLI gate only)
+    entitlements:
+      path: SplatXMetalTrainer.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.files.user-selected.read-write: true
+    dependencies:
+      - package: splatx-metal
+        product: SplatXMetal
+      - package: splatx-metal
+        product: SplatXTrainC
+      - package: MetalSplatter
+        product: MetalSplatter
+      - package: MetalSplatter
+        product: SplatIO
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.postmedia.splatx-metal-trainer
+        # The menu-bar app menu and the About panel use CFBundleName, and in the generated
+        # Info.plist CFBundleName is a fixed derivation of PRODUCT_NAME
+        # (INFOPLIST_KEY_CFBundleName is ignored even when passed as a build setting — app
+        # round 2 Task 8 measurement). So PRODUCT_NAME is the only means of unifying the
+        # name. If changed, the Tests target TEST_HOST path must be synced.
+        PRODUCT_NAME: "SplatX Metal Trainer"
+        # If the spaces in PRODUCT_NAME changed the module name (c99 conversion), @testable import would break — pinned.
+        PRODUCT_MODULE_NAME: SplatXMetalTrainer
+        INFOPLIST_KEY_CFBundleDisplayName: "SplatX Metal Trainer"
+        # App Store Task 2 (audit §3): the outputs are 3D scene assets (PLY/SPZ) and, with
+        # Cinema rendering on top, this is a content creation tool — peer apps conventionally
+        # use Graphics & Design. developer-tools hurts search visibility.
+        INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.graphics-design"
+        INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026 POSTMEDIA"
+        # No proprietary encryption (only zlib compression) — skips the export compliance question that appears on every submission.
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+        # App Store Task 1: designates AppIcon.appiconset as the app icon. actool
+        # merge-injects CFBundleIconName=AppIcon into the Info.plist (verified on the build output).
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        # Automatic signing. DEVELOPMENT_TEAM moved to Signing.xcconfig (gitignored — team ID
+        # not committed) — a fresh checkout copies Signing.xcconfig.example and fills in the
+        # team ID (configFiles below).
+        CODE_SIGN_STYLE: Automatic
+    # App Store Task 2: team ID moved to an xcconfig (a prerequisite for the GitHub release —
+    # audit §2). baseConfiguration is the committed wrapper Signing.base.xcconfig, and the
+    # wrapper pulls in the gitignored Signing.xcconfig (the real team ID) via `#include?`
+    # (optional include). Measured that with the baseConfiguration file itself missing,
+    # xcodebuild fails with the "Unable to open base configuration reference file" error —
+    # hence the wrapper structure is required, not mere tolerance of absence. With
+    # Signing.xcconfig absent (fresh clone), generate and the unsigned gate
+    # (CODE_SIGNING_ALLOWED=NO) still pass; only Xcode Run/Archive, which needs signing,
+    # requires the team designation (copy and fill in Signing.xcconfig.example).
+    configFiles:
+      Debug: Signing.base.xcconfig
+      Release: Signing.base.xcconfig
+    postBuildScripts:
+      - name: Build splatx.metallib (bundle resource)
+        shell: /bin/sh
+        basedOnDependencyAnalysis: false
+        script: |
+          set -eu
+          DEST="$BUILT_PRODUCTS_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
+          mkdir -p "$DEST"
+          "$SRCROOT/../../tools/build_metallib.sh" -o "$DEST/splatx.metallib"
+      # Audit-cleanup Task 7: in-bundle open source notices (MIT requires keeping the
+      # notice in distributions — the repo NOTICE/ThirdParty LICENSE files only accompany
+      # source distribution, so app binary distribution needs its own notice). The originals
+      # are assembled at build time from the canonical files in the repo — no hand
+      # transcription (so it can never diverge from the originals). Consumed by the
+      # "Open Source Licenses" sheet in BrandFooter (AcknowledgementsView).
+      - name: Assemble Acknowledgements.txt (bundle resource)
+        shell: /bin/sh
+        basedOnDependencyAnalysis: false
+        script: |
+          set -eu
+          DEST="$BUILT_PRODUCTS_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
+          mkdir -p "$DEST"
+          ROOT="$SRCROOT/../.."
+          OUT="$DEST/Acknowledgements.txt"
+          {
+            echo "SplatX Metal Trainer — Open Source Acknowledgements"
+            echo "(assembled at build time from the repository license files)"
+            echo
+            echo "================ NOTICE ================"
+            cat "$ROOT/NOTICE"
+            echo
+            echo "================ Apache License 2.0 (this product; gsplat/brush/metal-cpp derivations) ================"
+            cat "$ROOT/LICENSE"
+            echo
+            echo "================ MetalSplatter — MIT License ================"
+            cat "$ROOT/ThirdParty/MetalSplatter/LICENSE"
+            echo
+            echo "================ spz — MIT License ================"
+            cat "$ROOT/ThirdParty/spz/LICENSE"
+          } > "$OUT"
+  SplatXMetalTrainerTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests
+      # Bundle the fixtures into the test bundle (blue folder reference). Tests read from
+      # their own bundle, avoiding the ~/Desktop TCC prompt — same pattern as the
+      # SplatXBench fixtures bundling.
+      - path: ../../fixtures/colmap_mini
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - target: SplatXMetalTrainer
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        # In sync with the app target PRODUCT_NAME ("SplatX Metal Trainer") — the path contains spaces.
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/SplatX Metal Trainer.app/Contents/MacOS/SplatX Metal Trainer"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        # Automatic signing with the same team as the app host (consistent with running tests
+        # from the Xcode UI) — the team ID comes from the same Signing.base.xcconfig wrapper
+        # as the app target (App Store Task 2 migration, configFiles below).
+        CODE_SIGN_STYLE: Automatic
+    configFiles:
+      Debug: Signing.base.xcconfig
+      Release: Signing.base.xcconfig
+schemes:
+  SplatXMetalTrainer:
+    build:
+      targets:
+        SplatXMetalTrainer: all
+    run:
+      # Training-speed Task 3 (2026-07-21 diagnosis): with Run at Debug, the
+      # SwiftPM-dependency C++ core runs at -O0 and the host loop/eval slow down several-fold
+      # to tens of times — default Release. For development debugging use the
+      # SplatXMetalTrainer-Debug scheme below. The test action keeps the previous Debug
+      # (gate contract — the xcodebuild test command/config are unchanged, confirmed by
+      # diffing the generated xcscheme).
+      config: Release
+    test:
+      config: Debug
+      targets:
+        - SplatXMetalTrainerTests
+        # Audit-cleanup Task 2: the 8 renderer tests of the MetalSplatter fork
+        # (SplatRendererChunkTests) are XCTSkipped under CLI `swift test`, which does not
+        # compile .metal resources (ChunkTests.swift deviation 5). Earlier docs claimed
+        # "the app xcodebuild path compensates", but the scheme had no wiring, so they ran
+        # on no path at all — riding the package test target directly on the app gate scheme
+        # makes the safety net real (xcodebuild compiles package resource .metal files,
+        # lifting the skip condition).
+        - package: MetalSplatter/MetalSplatterTests
+  # For development: Run=Debug (breakpoints/assertions). The test action has the same configuration as the default scheme.
+  SplatXMetalTrainer-Debug:
+    build:
+      targets:
+        SplatXMetalTrainer: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - SplatXMetalTrainerTests

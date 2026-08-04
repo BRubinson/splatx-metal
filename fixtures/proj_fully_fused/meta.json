@@ -1,0 +1,36 @@
+{
+  "C": 2,
+  "N": 128,
+  "calc_compensations": 1,
+  "camera_model": 0,
+  "compare": "toleranced",
+  "eps2d": 0.3,
+  "far_plane": 10000000000.0,
+  "golden_source": "gsplat@77ab983:_torch_impl.py:_fully_fused_projection",
+  "height": 120,
+  "near_plane": 0.01,
+  "note": "The means2d/depths/conics/compensations comparison is restricted to the elements where valid=(radii>0).all(-1) (07 Correction 3). covars_triu is the [N,6] upper triangle (triu) [c00,c01,c02,c11,c12,c22] (07 Correction 5). radii is compared exact.",
+  "radius_clip": 0.0,
+  "seeds": {
+    "input": 7
+  },
+  "tolerances": {
+    "compensations": {
+      "atol": 1e-06,
+      "rtol": 0.0001
+    },
+    "conics": {
+      "atol": 1e-06,
+      "rtol": 0.0001
+    },
+    "depths": {
+      "atol": 1e-05,
+      "rtol": 1e-05
+    },
+    "means2d": {
+      "atol": 1e-05,
+      "rtol": 1e-05
+    }
+  },
+  "width": 160
+}

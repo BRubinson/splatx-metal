@@ -1,0 +1,27 @@
+{
+  "B": 1,
+  "D": 3,
+  "K": 25,
+  "N": 32,
+  "compare": "toleranced",
+  "degrees_to_use": 4,
+  "golden_source": "gsplat@77ab983:_torch_impl.py:_spherical_harmonics",
+  "seeds": {
+    "input": 17
+  },
+  "tensors": {
+    "inputs": [
+      "dirs",
+      "coeffs"
+    ],
+    "outputs": [
+      "colors_deg4"
+    ]
+  },
+  "tolerances": {
+    "colors_deg4": {
+      "atol": 1e-06,
+      "rtol": 1e-05
+    }
+  }
+}

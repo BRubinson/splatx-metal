@@ -1,0 +1,57 @@
+# TEMPORARY workflow — delete after its one question is answered.
+#
+# Purpose: determine whether GitHub-hosted macOS runners can run this
+# project's GPU test suite at all. Hosted runners have been observed to
+# expose Metal as an "Apple Paravirtual device"; this repository requires
+# the Metal 3.2 toolchain and asserts `threadExecutionWidth == 32` at
+# pipeline creation (the backend throws otherwise, by design). Whether
+# those hold on a hosted runner is UNVERIFIED — this single manual run
+# settles it and fixes the boundary of what ci.yml can ever cover.
+#
+# Interpretation of results:
+#   - `splatx probe` succeeds with a real GPU report  → hosted runners can
+#     run at least part of the GPU suite; consider extending ci.yml.
+#   - build succeeds but probe/pipeline creation fails → ci.yml stays
+#     compile-only (its current scope), full gates stay on maintainer
+#     hardware. This is the expected outcome.
+#
+# Either way: record the result in the issue tracker, then DELETE this file.
+
+name: probe (temporary, manual only)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 26
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.app || sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
+          swift --version
+
+      - name: Install Metal toolchain (Xcode 26 downloads it separately)
+        run: |
+          if xcrun -sdk macosx metal --version 2>/dev/null; then
+            echo "Metal toolchain already present"
+          else
+            xcodebuild -downloadComponent MetalToolchain
+            xcrun -sdk macosx metal --version
+          fi
+
+      - name: Build
+        run: swift build
+
+      - name: Device info
+        run: swift run splatx info
+
+      - name: GPU capability probe
+        run: swift run splatx probe
+
+      - name: Offline metallib compile (no GPU required)
+        run: tools/build_metallib.sh

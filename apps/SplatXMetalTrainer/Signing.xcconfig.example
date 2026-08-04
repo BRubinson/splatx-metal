@@ -1,0 +1,8 @@
+// Local signing configuration template (App Store Task 2 — team ID moved out of the commit).
+// Usage: copy this file to Signing.xcconfig and fill in your own Apple Developer team ID.
+//   cp Signing.xcconfig.example Signing.xcconfig
+// Signing.xcconfig is gitignored (repo root .gitignore). The committed Signing.base.xcconfig
+// pulls it in via `#include?` (optional include), so even without the file, xcodegen generate
+// and the unsigned test gate (CODE_SIGNING_ALLOWED=NO) pass as-is — it is only needed for
+// Xcode Run/Archive, which requires signing.
+DEVELOPMENT_TEAM = YOUR_TEAM_ID

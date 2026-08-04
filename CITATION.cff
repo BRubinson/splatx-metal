@@ -1,0 +1,63 @@
+cff-version: 1.2.0
+message: >-
+  If you use splatx-metal in your research, please cite the repository, and
+  please also cite the works it builds on: the gsplat library (whose numerics
+  this project reproduces) and the original 3D Gaussian Splatting paper.
+title: "splatx-metal: 3D Gaussian Splatting training on Apple Silicon"
+type: software
+authors:
+  - name: "POSTMEDIA"
+repository-code: "https://github.com/POSTMEDIA/splatx-metal"
+license: Apache-2.0
+keywords:
+  - gaussian-splatting
+  - metal
+  - apple-silicon
+  - radiance-fields
+  - machine-learning
+references:
+  - type: article
+    title: "gsplat: An Open-Source Library for Gaussian Splatting"
+    authors:
+      - family-names: Ye
+        given-names: Vickie
+      - family-names: Li
+        given-names: Ruilong
+      - family-names: Kerr
+        given-names: Justin
+      - family-names: Turkulainen
+        given-names: Matias
+      - family-names: Yi
+        given-names: Brent
+      - family-names: Pan
+        given-names: Zhuoyang
+      - family-names: Seiskari
+        given-names: Otto
+      - family-names: Ye
+        given-names: Jianbo
+      - family-names: Hu
+        given-names: Jeffrey
+      - family-names: Tancik
+        given-names: Matthew
+      - family-names: Kanazawa
+        given-names: Angjoo
+    journal: "Journal of Machine Learning Research"
+    volume: 26
+    year: 2025
+    url: "https://arxiv.org/abs/2409.06765"
+  - type: article
+    title: "3D Gaussian Splatting for Real-Time Radiance Field Rendering"
+    authors:
+      - family-names: Kerbl
+        given-names: Bernhard
+      - family-names: Kopanas
+        given-names: Georgios
+      - family-names: "Leimkühler"
+        given-names: Thomas
+      - family-names: Drettakis
+        given-names: George
+    journal: "ACM Transactions on Graphics"
+    volume: 42
+    issue: 4
+    year: 2023
+    url: "https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/"

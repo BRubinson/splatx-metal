@@ -1,0 +1,30 @@
+name: Feature request
+description: Propose a new capability or change in behavior
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        **For large features, please get agreement here (or in a Discussion)
+        before writing a PR.** This project reproduces gsplat at a pinned
+        commit — features that change training numerics need design review
+        against the golden-fixture contract before any code makes sense.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What can't you do today, and in what workflow does it hurt?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: >-
+        What you'd like to happen. If it affects training numerics, say how
+        it relates to gsplat's behavior at commit 77ab983.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

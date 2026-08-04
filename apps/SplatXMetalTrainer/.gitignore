@@ -1,0 +1,6 @@
+# xcodegen output (rewritten from project.yml's info.properties on generate) — same class as .xcodeproj.
+# Ignore only the app root (FIX 3 item 7) — anchored so future Info.plist files under subpaths are not swallowed.
+/Info.plist
+# App Store Task 2: the entitlements file is also an xcodegen output (rewritten from project.yml
+# entitlements.properties on generate) — anchored under the same discipline as Info.plist.
+/SplatXMetalTrainer.entitlements

@@ -1,0 +1,106 @@
+{
+  "I": 2,
+  "N": 128,
+  "cdim": 3,
+  "compare": "toleranced",
+  "golden_source": "gen_fixtures.py:_rasterize_reference (an original pure-torch f64 implementation \u2014 gsplat _rasterize_to_pixels depends on CUDA/nerfacc and cannot be used on macOS, 07). The formulas and constants = gsplat@77ab983 RasterizeToPixels3DGSDevice.cuh:44-55 + SerialBatchFwd.cu:179-296 + Common.h:97-114 (spec 05).",
+  "has_background": 0,
+  "height": 120,
+  "lineage": {
+    "colors": "synthetic rand[0,1) seed 23 (not chained from the SH golden \u2014 only the [I,N,3] shape lineage)",
+    "conics": "a byte-identical copy of proj_fully_fused/conics.sxt",
+    "flatten_ids": "a byte-identical copy of isect_std/flatten_ids_sorted.sxt (the sorted golden)",
+    "isect_offsets": "a byte-identical copy of isect_std/offsets.sxt",
+    "means2d": "a byte-identical copy of proj_fully_fused/means2d.sxt (the fwd golden, seed 7)",
+    "opacities": "synthetic rand*0.93+0.05 seed 23 + the 8 most-intersected per image set to opac=0.99"
+  },
+  "masks": 0,
+  "n_isects": 5097,
+  "n_terminated_per_image": [
+    69,
+    77
+  ],
+  "n_terminated_pixels": 146,
+  "note": "Render equation: sigma=0.5(A dx\u00b2+C dy\u00b2)+B dx dy (delta=mean-pixel_center, center=+0.5), alpha=min(0.99, opac\u00b7exp(-sigma)), valid=!(sigma<0 || alpha<1/255), early termination at next_T=T(1-alpha)<=1e-4 **exclusive** (the triggering Gaussian is not included, Fwd.cu:246-251). last_ids = the **absolute isect index** (relative to flatten_ids) of the last contributing Gaussian, or 0 when nothing contributed (a dual-purpose encoding \u2014 because MAX_ALPHA=0.99 the first Gaussian can never cross the threshold, so there is no contamination, Fwd.cu:186/261/293). The background is applied globally in one pass outside the tile loop: render_colors += (1-render_alphas)\u00b7bg (07 Correction 4 \u2014 bg is written to the in-bounds pixels of empty tiles as well). masks=None is fixed (07 Correction 6). flatten_ids is the **sorted golden** (the isect sort contract, 03), and isect_offsets is the global [I,TH,TW] cumulative sum. Comparison: render_colors/render_alphas with tolerances, last_ids **exact** (the flake policy at the threshold boundary is 07 open question #5 \u2014 to be decided after measurement). The Metal bwd test feeds this fixture's fwd goldens (render_alphas/last_ids) in as input to block fwd error propagation (07). bwd: inject v_render_colors/v_render_alphas \u2192 v_means2d/v_conics/v_colors/v_opacities (last_ids is not differentiated). A Gaussian with the MAX_ALPHA clamp active contributes 0 to v_conics/v_means2d/v_opacities and only v_colors survives (the clamp_max autograd \u2261 the Bwd.cu:259 gate). Self-verification: (a) T decays monotonically and the surviving T>1e-4, (b) the render_alphas==1-T_final identity (f64 1e-12), (c) an all-pixel comparison against a serial per-pixel scalar oracle (a literal translation of the CUDA fwd), (d) the raster_small hand-check assertions. The total fixtures size cap was relaxed to < 2MB by approval (the 1c Task 2 brief) \u2014 the raster image tensors [I,H,W,{3,1}] (render/v_render) dominate the size.",
+  "opac_boost_flat_ids": [
+    15,
+    19,
+    34,
+    43,
+    55,
+    85,
+    107,
+    111,
+    143,
+    147,
+    162,
+    171,
+    183,
+    192,
+    213,
+    235
+  ],
+  "seeds": {
+    "grad": 1023,
+    "input": 23
+  },
+  "tensors": {
+    "grad_inputs": [
+      "v_means2d",
+      "v_conics",
+      "v_colors",
+      "v_opacities"
+    ],
+    "grad_outputs": [
+      "v_render_colors",
+      "v_render_alphas"
+    ],
+    "inputs": [
+      "means2d",
+      "conics",
+      "colors",
+      "opacities",
+      "flatten_ids",
+      "isect_offsets"
+    ],
+    "outputs": [
+      "render_colors",
+      "render_alphas",
+      "last_ids"
+    ]
+  },
+  "tile_height": 8,
+  "tile_size": 16,
+  "tile_width": 10,
+  "tolerances": {
+    "render_alphas": {
+      "atol": 1e-05,
+      "rtol": 0.0001
+    },
+    "render_colors": {
+      "atol": 1e-05,
+      "rtol": 0.0001
+    },
+    "v_colors": {
+      "atol": 1e-06,
+      "rel_l2": 0.001,
+      "rtol": 0.005
+    },
+    "v_conics": {
+      "atol": 1e-05,
+      "rel_l2": 0.001,
+      "rtol": 0.005
+    },
+    "v_means2d": {
+      "atol": 1e-05,
+      "rel_l2": 0.001,
+      "rtol": 0.005
+    },
+    "v_opacities": {
+      "atol": 1e-05,
+      "rel_l2": 0.001,
+      "rtol": 0.005
+    }
+  },
+  "width": 160
+}

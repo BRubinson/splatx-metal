@@ -1,0 +1,87 @@
+{
+  "C": 2,
+  "N": 128,
+  "bwd_inject_v_compensations": 1,
+  "calc_compensations": 1,
+  "camera_model": 0,
+  "compare": "toleranced",
+  "eps2d": 0.3,
+  "far_plane": 10000000000.0,
+  "golden_source": "gsplat@77ab983:_math.py:_quat_scale_to_covar_preci + _torch_impl.py:_fully_fused_projection",
+  "height": 120,
+  "near_plane": 0.01,
+  "note": "The fwd comparison is restricted to the elements where valid=(radii>0).all(-1), and radii is exact (07 Correction 3). The upstream v_* are stored after multiplication by the valid mask \u2014 inject them as they are. opacities is unused by the golden (the golden takes the opacities=None path, 07 open question #2). v_means atol 5e-5: summing along the C=2 camera axis cancels signs (contributions of order \u00b172 \u2192 a sum of order 0.04), so the ~1e-5 per-camera rounding of the fp32 kernel survives \u2014 a term-by-term fp64 recomputation was confirmed to match the golden (Task 6), and CUDA fp32 has the same limit.",
+  "radius_clip": 0.0,
+  "seeds": {
+    "grad": 1011,
+    "input": 11
+  },
+  "tensors": {
+    "grad_inputs": [
+      "v_means",
+      "v_quats",
+      "v_scales",
+      "v_viewmats"
+    ],
+    "grad_outputs": [
+      "v_means2d",
+      "v_depths",
+      "v_conics",
+      "v_compensations"
+    ],
+    "inputs": [
+      "means",
+      "quats",
+      "scales",
+      "opacities",
+      "viewmats",
+      "Ks"
+    ],
+    "outputs": [
+      "radii",
+      "means2d",
+      "depths",
+      "conics",
+      "compensations"
+    ]
+  },
+  "tolerances": {
+    "compensations": {
+      "atol": 1e-06,
+      "rtol": 0.0001
+    },
+    "conics": {
+      "atol": 1e-06,
+      "rtol": 0.0001
+    },
+    "depths": {
+      "atol": 1e-05,
+      "rtol": 1e-05
+    },
+    "means2d": {
+      "atol": 1e-05,
+      "rtol": 1e-05
+    },
+    "v_means": {
+      "atol": 5e-05,
+      "rel_l2": 0.0001,
+      "rtol": 0.0002
+    },
+    "v_quats": {
+      "atol": 1e-06,
+      "rel_l2": 0.0001,
+      "rtol": 0.0002
+    },
+    "v_scales": {
+      "atol": 1e-06,
+      "rel_l2": 0.0001,
+      "rtol": 0.0002
+    },
+    "v_viewmats": {
+      "atol": 0.002,
+      "rel_l2": 0.0001,
+      "rtol": 0.0002
+    }
+  },
+  "width": 160
+}

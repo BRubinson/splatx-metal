@@ -1,0 +1,40 @@
+{
+  "D": 3,
+  "N": 1000,
+  "b1": 0.9,
+  "b2": 0.999,
+  "compare": "toleranced",
+  "eps": 1e-08,
+  "golden_source": "gsplat@77ab983:AdamCUDA.cu:34-71 (the formula reproduced by hand in f32)",
+  "lr": 0.01,
+  "note": "No bias correction, and eps is added outside sqrt(v) (06). *_out = every row updated, ignoring valid; *_out_masked = for the Gaussians with valid[g]=0 the param and both moments stay exactly as given in the input. Rows exp_avg_sq[0..2] = the boundary values {0, 1e-40, 1e-30} (grad=0 on those rows).",
+  "seeds": {
+    "input": 21
+  },
+  "tolerances": {
+    "exp_avg_out": {
+      "atol": 1e-07,
+      "rtol": 1e-06
+    },
+    "exp_avg_out_masked": {
+      "atol": 1e-07,
+      "rtol": 1e-06
+    },
+    "exp_avg_sq_out": {
+      "atol": 1e-07,
+      "rtol": 1e-06
+    },
+    "exp_avg_sq_out_masked": {
+      "atol": 1e-07,
+      "rtol": 1e-06
+    },
+    "param_out": {
+      "atol": 1e-07,
+      "rtol": 1e-06
+    },
+    "param_out_masked": {
+      "atol": 1e-07,
+      "rtol": 1e-06
+    }
+  }
+}

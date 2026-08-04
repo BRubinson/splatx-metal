@@ -1,0 +1,10 @@
+metal-cpp — Apple official C++ Metal bindings (header-only)
+
+Version:   macOS 26.4 / iOS 26.4 (release/metal-cpp_macOS26.4_iOS26.4)
+Source:    https://github.com/apple/metal-cpp (official Apple distribution — developer.apple.com/metal/cpp/ has been migrated to GitHub)
+Download:  https://github.com/apple/metal-cpp/archive/refs/tags/release/metal-cpp_macOS26.4_iOS26.4.zip
+SHA-256:   ced91a14b69c3bf37983fb0e8618ecea6ca565125a0756e97b2180749de83bec (zip)
+License:   Apache-2.0 (LICENSE.txt, Copyright Apple Inc.)
+Vendored:  2026-07-11 (Phase 1a Task 2)
+
+Vendored verbatim, without modification. On upgrade, update this file plus NOTICE and docs/provenance.md.

@@ -1,0 +1,7 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & help (Discussions)
+    url: https://github.com/POSTMEDIA/splatx-metal/discussions
+    about: >-
+      Build problems, dataset questions, "is this expected?" — ask in
+      Discussions Q&A. English and Korean both welcome.

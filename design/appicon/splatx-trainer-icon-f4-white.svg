@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+<!-- SplatX Metal Trainer app icon — alternate background (F4 Pure White).
+     Mark: the authoritative splatx-studio blade geometry (256 coordinate system ×4), bimetal machined-facet render.
+     User-approved 2026-07-27 (round-3 draft F3). Alternate backgrounds: f1-graphite, f4-white. -->
+<defs>
+  <radialGradient id="bg" cx=".5" cy=".36" r=".95">
+    <stop offset="0" stop-color="#FFFFFF"/><stop offset=".75" stop-color="#F4F6F8"/>
+    <stop offset="1" stop-color="#E6EAEE"/></radialGradient>
+  <linearGradient id="ct" x1="0" y1="105" x2="0" y2="128" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#FDFEFF"/><stop offset=".3" stop-color="#DCE5EC"/>
+    <stop offset=".62" stop-color="#AAB6C1"/><stop offset=".84" stop-color="#8794A0"/>
+    <stop offset="1" stop-color="#66727E"/></linearGradient>
+  <linearGradient id="cu" x1="0" y1="128" x2="0" y2="151" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#39434D"/><stop offset=".3" stop-color="#2A323B"/>
+    <stop offset=".62" stop-color="#57626D"/><stop offset=".85" stop-color="#3E4750"/>
+    <stop offset="1" stop-color="#1F262D"/></linearGradient>
+  <linearGradient id="gt" x1="0" y1="105" x2="0" y2="128" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#F4FFE0"/><stop offset=".28" stop-color="#B9F07E"/>
+    <stop offset=".62" stop-color="#7CE04A"/><stop offset=".86" stop-color="#4CBE45"/>
+    <stop offset="1" stop-color="#2E9D43"/></linearGradient>
+  <linearGradient id="gu" x1="0" y1="128" x2="0" y2="151" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#0F8A50"/><stop offset=".3" stop-color="#0A6B3E"/>
+    <stop offset=".55" stop-color="#129959"/><stop offset=".8" stop-color="#095C34"/>
+    <stop offset="1" stop-color="#04351E"/></linearGradient>
+  <filter id="s18" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="18"/></filter>
+  <filter id="s7" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="7"/></filter>
+  <clipPath id="cc">
+    <path d="M 29 128 Q 128 105 227 128 Q 128 151 29 128 Z" transform="scale(4) rotate(-45 128 128)"/></clipPath>
+  <linearGradient id="edge" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#FFFFFF" stop-opacity=".12"/><stop offset=".08" stop-color="#FFFFFF" stop-opacity="0"/>
+    <stop offset=".92" stop-color="#000000" stop-opacity="0"/><stop offset="1" stop-color="#000000" stop-opacity=".22"/></linearGradient>
+  <clipPath id="sq"><rect width="1024" height="1024" rx="230"/></clipPath>
+</defs>
+<g clip-path="url(#sq)">
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <g transform="translate(0,16)" opacity=".38" filter="url(#s18)">
+    <path d="M 29 128 Q 128 105 227 128 Q 128 151 29 128 Z" transform="scale(4) rotate(45 128 128)"/>
+    <path d="M 29 128 Q 128 105 227 128 Q 128 151 29 128 Z" transform="scale(4) rotate(-45 128 128)"/>
+  </g>
+  <g transform="scale(4)">
+    <g transform="rotate(-45 128 128)">
+      <path d="M 29 128 Q 128 105 227 128 Z" fill="url(#ct)"/>
+      <path d="M 29 128 Q 128 151 227 128 Z" fill="url(#cu)"/>
+      <path d="M 44 128 L 212 128" stroke="#FFFFFF" stroke-width="1.1" stroke-linecap="round" opacity=".8"/>
+    </g>
+  </g>
+  <g clip-path="url(#cc)">
+    <circle cx="512" cy="512" r="128" fill="#000000" opacity=".42" filter="url(#s7)"/>
+  </g>
+  <g transform="scale(4)">
+    <g transform="rotate(45 128 128)">
+      <path d="M 29 128 Q 128 105 227 128 Z" fill="url(#gt)"/>
+      <path d="M 29 128 Q 128 151 227 128 Z" fill="url(#gu)"/>
+      <path d="M 44 128 L 212 128" stroke="#F4FFE0" stroke-width="1.1" stroke-linecap="round" opacity=".85"/>
+    </g>
+  </g>
+  
+</g>
+</svg>

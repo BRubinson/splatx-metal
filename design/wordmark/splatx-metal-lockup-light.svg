@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-47.2 -281.5 2160 407.5" width="2160" height="408">
+<!-- SplatX Metal lockup (final L6, light variant, transparent background) — studio pattern: SPLAT + main X + METAL (green). -->
+<defs><linearGradient id="ct" x1="0" y1="105" x2="0" y2="128" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#FDFEFF"/><stop offset=".3" stop-color="#DCE5EC"/>
+    <stop offset=".62" stop-color="#AAB6C1"/><stop offset=".84" stop-color="#8794A0"/>
+    <stop offset="1" stop-color="#66727E"/></linearGradient>
+  <linearGradient id="cu" x1="0" y1="128" x2="0" y2="151" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#39434D"/><stop offset=".3" stop-color="#2A323B"/>
+    <stop offset=".62" stop-color="#57626D"/><stop offset=".85" stop-color="#3E4750"/>
+    <stop offset="1" stop-color="#1F262D"/></linearGradient>
+  <linearGradient id="gt" x1="0" y1="105" x2="0" y2="128" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#F4FFE0"/><stop offset=".28" stop-color="#B9F07E"/>
+    <stop offset=".62" stop-color="#7CE04A"/><stop offset=".86" stop-color="#4CBE45"/>
+    <stop offset="1" stop-color="#2E9D43"/></linearGradient>
+  <linearGradient id="gu" x1="0" y1="128" x2="0" y2="151" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#0F8A50"/><stop offset=".3" stop-color="#0A6B3E"/>
+    <stop offset=".55" stop-color="#129959"/><stop offset=".8" stop-color="#095C34"/>
+    <stop offset="1" stop-color="#04351E"/></linearGradient>
+  <filter id="sB" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="4.5"/></filter>
+  <filter id="sA" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="1.8"/></filter>
+  <clipPath id="ccX"><path d="M 29 128 Q 128 105 227 128 Q 128 151 29 128 Z" transform="rotate(-45 128 128)"/></clipPath><linearGradient id="mtG" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#0B7A47"/><stop offset="1" stop-color="#7CE04A"/></linearGradient></defs>
+<path d="M99.04 -112.79 L125.90 -112.79 C125.47 -139.00 103.12 -157.70 70.04 -157.70 C37.38 -157.70 12.89 -139.43 12.89 -111.93 C12.89 -89.59 28.79 -76.70 54.36 -70.04 L71.97 -65.53 C88.73 -61.23 100.12 -56.07 100.12 -43.83 C100.12 -30.51 87.44 -21.48 68.96 -21.48 C51.35 -21.48 37.60 -29.43 36.31 -45.76 L8.81 -45.76 C10.10 -15.04 32.87 2.36 69.18 2.36 C106.56 2.36 128.05 -16.33 128.05 -43.61 C128.05 -70.68 105.70 -82.93 82.50 -88.30 L67.89 -92.17 C55.00 -95.18 41.25 -100.55 41.25 -113.65 C41.25 -125.25 51.99 -133.85 69.61 -133.85 C86.37 -133.85 97.75 -126.11 99.04 -112.79 M175.86 0.00 L203.79 0.00 L203.79 -52.64 L233.87 -52.64 C269.75 -52.64 289.09 -74.12 289.09 -103.98 C289.09 -133.85 269.96 -155.55 234.30 -155.55 L175.86 -155.55 L175.86 0.00 M203.79 -75.62 L203.79 -132.13 L230.00 -132.13 C251.06 -132.13 260.51 -120.74 260.51 -103.98 C260.51 -87.44 251.06 -75.62 230.00 -75.62 L203.79 -75.62 M336.08 0.00 L432.76 0.00 L432.76 -23.63 L364.01 -23.63 L364.01 -155.55 L336.08 -155.55 L336.08 0.00 M503.25 0.00 L516.14 -38.46 L574.80 -38.46 L587.69 0.00 L617.55 0.00 L562.55 -155.55 L528.18 -155.55 L473.39 0.00 L503.25 0.00 M523.66 -61.02 L544.72 -123.75 L546.01 -123.75 L567.28 -61.02 L523.66 -61.02 M634.41 -132.13 L682.54 -132.13 L682.54 0.00 L710.46 0.00 L710.46 -132.13 L758.38 -132.13 L758.38 -155.55 L634.41 -155.55 L634.41 -132.13" fill="#14181E"/>
+<g transform="translate(687.27 -347.98) scale(2.1110)"><g><g transform="translate(0,3)" opacity=".32" filter="url(#sB)">
+      <path d="M 29 128 Q 128 105 227 128 Q 128 151 29 128 Z" transform="rotate(45 128 128)"/>
+      <path d="M 29 128 Q 128 105 227 128 Q 128 151 29 128 Z" transform="rotate(-45 128 128)"/>
+    </g>
+    <g transform="rotate(-45 128 128)">
+      <path d="M 29 128 Q 128 105 227 128 Z" fill="url(#ct)"/>
+      <path d="M 29 128 Q 128 151 227 128 Z" fill="url(#cu)"/>
+      <path d="M 44 128 L 212 128" stroke="#FFFFFF" stroke-width="1.1" stroke-linecap="round" opacity=".8"/>
+    </g>
+    <g clip-path="url(#ccX)"><circle cx="128" cy="128" r="32" fill="#000" opacity=".42" filter="url(#sA)"/></g>
+    <g transform="rotate(45 128 128)">
+      <path d="M 29 128 Q 128 105 227 128 Z" fill="url(#gt)"/>
+      <path d="M 29 128 Q 128 151 227 128 Z" fill="url(#gu)"/>
+      <path d="M 44 128 L 212 128" stroke="#F4FFE0" stroke-width="1.1" stroke-linecap="round" opacity=".85"/>
+    </g></g></g>
+<text x="1161.77" y="0" font-family="-apple-system,'SF Pro Display','Helvetica Neue',sans-serif" font-size="225" font-weight="500" letter-spacing="36" fill="url(#mtG)">METAL</text>
+</svg>

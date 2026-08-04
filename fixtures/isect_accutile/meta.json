@@ -1,0 +1,27 @@
+{
+  "I": 2,
+  "N": 128,
+  "chained_from": "proj_fully_fused (a byte-identical copy of the means2d/radii/depths/conics fwd goldens, seed 7) — the same chaining convention as isect_std",
+  "compare": "exact",
+  "golden_source": "C++ CPU reference isect_tiles_cpu (AccuTile) — splatx-core-tests --dump-accutile. Reimplementation of gsplat@77ab983:IntersectTile.cu:83-207,288-372",
+  "height": 120,
+  "image_n_bits": 1,
+  "key_encoding": "isect_id(u64) = image_id << (32+tile_n_bits) | tile_id << 32 | f32bits(depth); tile_id = tile_y*tile_width + tile_x; SXT does not support int64 → stored split into lo/hi int32 (D3).",
+  "n_isects": 3506,
+  "n_isects_aabb": 5097,
+  "n_tiles": 80,
+  "note": "The golden producer = the CPU reference — no torch cross-check is possible (torch _isect_tiles has no AccuTile, 07 Correction 2). Defenses against the self-confirmation risk of generating and verifying the golden with the same code: (a) the AccuTile ⊆ AABB assertion (per-element tile count ≤ plus (flatten,key) pair subset — AABB is the baseline already checked against the torch golden in isect_std), (b) an independent geometric oracle (the box minimum of a convex quadratic form) and symmetry property tests (IsectTests isect_tiles_accutile_properties). Measured AccuTile reduction rate: n_isects 3506 vs AABB 5097 (31.2% reduction). opacities is LCG-synthesized (seed 0x5EEDACC0) over [0.02,0.99) plus 2 special slots (t_zero_idx: opacity==the exact α_thresh value → t=0, t_neg_idx: 0.001 < α_thresh → t<0 — covers the approved deviation of disposition #13). Emit order: element idx → sweep axis u → orthogonal axis v (the isY swap frame). All tensors are compared exact (int/bit).",
+  "opacity_seed": 1592634560,
+  "t_neg_idx": 1,
+  "t_zero_idx": 0,
+  "tensors": {
+    "inputs": ["means2d", "radii", "depths", "conics", "opacities"],
+    "outputs": ["tiles_per_gauss", "isect_ids_lo", "isect_ids_hi", "flatten_ids"]
+  },
+  "tile_height": 8,
+  "tile_n_bits": 7,
+  "tile_size": 16,
+  "tile_width": 10,
+  "tolerances": {},
+  "width": 160
+}

@@ -1,0 +1,37 @@
+spz — Niantic Labs SPZ gaussian splat format C++ library (partial vendoring)
+
+Version:   v2.1.0 (tag)
+Commit:    2cf0be04d86b5f9632d9073ccbbe3b1e6a609f31 (2025-10-23)
+Source:    https://github.com/nianticlabs/spz
+License:   MIT (LICENSE, Copyright (c) 2024 Niantic Labs)
+Vendored:  2026-07-12 (SPZ Task 1)
+
+Vendored files (the src/cc library sources only — cli_tools/samples/CMake and the python/wasm
+bindings excluded; every file byte-identical with upstream v2.1.0, verified against git blob hashes):
+
+SHA-256:
+  d2b852220d1043148f523c4154e8bf7d9c5e419aede33b4c94115cfc457e4714  LICENSE
+  a7a603564df969bd88dd30433216637a3854d68c03c83f6a2c9852ddaa98d4b4  src/cc/load-spz.cc
+  eaf7c72e209ea481bcdd7367e50add9e2883484ec94bd6ee5c8017e006e06d0b  src/cc/load-spz.h
+  5a82cfc6d7667f3393b6c65086bc7d94337f751689d2cef38928a928a6627783  src/cc/splat-c-types.cc
+  0e4a6301339f7c6de55324bc6deb83484de0873b55fdc9be60cf0b292ce0f007  src/cc/splat-c-types.h
+  529c92e9980291ea5f2433e6086ff9a5130d8d24b5af572829e8cfa30e96e4a4  src/cc/splat-types.cc
+  93a01e5e4edb6709ad001a9e688003c846c97b3e4631a176143779744299e2d8  src/cc/splat-types.h
+
+Version-selection rationale (dependency due diligence — SPZ Task 1):
+  - On upstream main (as of 2026-07, e.g. c538491), load-spz.cc unconditionally includes
+    <zlib.h> and <zstd.h> — the NGSP (SPZ header v4+) format uses zstd multi-stream
+    compression, and there is no build flag to conditionally exclude the zstd path
+    (excluding it would require a source patch).
+  - zstd introduction commit: 51008f8 ("Switch to zstd & ... parallel zstd streams", 2026-04-29).
+    zstd is mandatory from v3.0.0 (5bf2945, 2026-05-04) onward. The iOS/macOS SDK provides
+    only zlib (libz.tbd) and zstd is not a linkable system library, so we vendor v2.1.0,
+    the last tagged release that does not use zstd (Global Constraints option (a)).
+  - v2.1.0 reads SPZ header versions 1–3 (single gzip stream) and writes version 3.
+    Compression uses zlib (deflate/gzip) only — link: -lz (Apple SDK libz.tbd, common to
+    macOS/iOS).
+  - The commit differs from the research/spz checkout (c538491, reference only) because of
+    the zstd constraint above.
+
+Vendored verbatim, without modification. On upgrade, update this file plus NOTICE and docs/provenance.md.
+(If we ever decide to vendor a bundled zstd, this can be raised to latest main + NGSP v4 support.)
