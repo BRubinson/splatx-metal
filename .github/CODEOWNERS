@@ -4,17 +4,14 @@
 # license discipline is a distribution-blocking constraint, and the golden
 # fixtures are the correctness contract.
 #
-# NOTE: replace @POSTMEDIA-MAINTAINER with the actual maintainer GitHub
-# handle (or a maintainers team) before enabling "Require review from Code
-# Owners" in the branch ruleset.
 
 # Numerical contract: kernels, backends, committed goldens
-/Sources/SplatXKernelSrc/   @POSTMEDIA-MAINTAINER
-/Sources/SplatXCore/        @POSTMEDIA-MAINTAINER
-/fixtures/                  @POSTMEDIA-MAINTAINER
+/Sources/SplatXKernelSrc/   @postmedia-meta
+/Sources/SplatXCore/        @postmedia-meta
+/fixtures/                  @postmedia-meta
 
 # Licensing / provenance surface
-/docs/provenance.md         @POSTMEDIA-MAINTAINER
-/NOTICE                     @POSTMEDIA-MAINTAINER
-/LICENSE                    @POSTMEDIA-MAINTAINER
-/ThirdParty/                @POSTMEDIA-MAINTAINER
+/docs/provenance.md         @postmedia-meta
+/NOTICE                     @postmedia-meta
+/LICENSE                    @postmedia-meta
+/ThirdParty/                @postmedia-meta
