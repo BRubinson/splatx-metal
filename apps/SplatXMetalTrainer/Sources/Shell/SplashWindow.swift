@@ -417,10 +417,15 @@ final class SplashWindow {
 // The background radial gradient (#14181E → #0B0E12 → #060809, cx .5 cy .3 r 1.1) and the green
 // glow (#1E9A55 @ .26) are transplanted verbatim from the values in
 // design/banner/github-banner.svg (no new asset).
-// The company name spelling follows `POSTMEDIA` (BrandFooter — .caption2 + tracking 1.5 +
-// textSecondary). Public-pipeline Task 5 unified the legal notices (NOTICE and
-// NSHumanReadableCopyright) to POSTMEDIA as well — the previous dual spelling `PoSTMEDIA` read
-// as a typo from the outside and was removed.
+// The company name spelling is deliberately split, and the split is the rule — do not "fix" it
+// into one form. **Brand/UI surfaces use `POSTMEDIA`** (this splash, BrandFooter — .caption2 +
+// tracking 1.5 + textSecondary), matching the wordmark assets. **Legal notices use `PoSTMEDIA`**
+// (NOTICE's copyright line and NSHumanReadableCopyright), which is the registered spelling the
+// GitHub organization `PoSTMEDIA-AI` and the account display name both carry.
+// Public-pipeline Task 5 had briefly unified both to POSTMEDIA on the reasoning that the dual
+// spelling reads as a typo; that was reverted for the legal notices once the organization
+// confirmed `PoSTMEDIA` is the legal form. A copyright line must name the legal entity, so where
+// the two disagree, the legal notice wins and the brand surfaces are left alone.
 
 private struct SplashContent: View {
     let wordmark: NSImage?

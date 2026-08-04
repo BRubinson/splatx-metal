@@ -143,7 +143,7 @@ targets:
         # Cinema rendering on top, this is a content creation tool — peer apps conventionally
         # use Graphics & Design. developer-tools hurts search visibility.
         INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.graphics-design"
-        INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026 POSTMEDIA"
+        INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026 PoSTMEDIA"
         # No proprietary encryption (only zlib compression) — skips the export compliance question that appears on every submission.
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         # App Store Task 1: designates AppIcon.appiconset as the app icon. actool

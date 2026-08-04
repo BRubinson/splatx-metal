@@ -1,35 +1,95 @@
-# Full gate — the GPU tier. Runs the complete numerical suites, which
-# require a real Apple-Silicon GPU (the backend asserts
-# threadExecutionWidth == 32 and refuses paravirtualized devices).
+# Full gate — the GPU tier. Runs the complete numerical suites (golden
+# fixtures over both kernel-compilation paths, Swift package tests, app
+# tests, XCFramework) on a GitHub-hosted macOS runner.
 #
-# SECURITY INVARIANT — do not weaken:
-#   This workflow must NEVER have a `pull_request` trigger. It targets a
-#   self-hosted runner; a PR trigger would execute untrusted external code
-#   on maintainer hardware. `workflow_dispatch` + `push: main` (maintainer
-#   -reviewed code only) is the ceiling.
+# WHY A HOSTED RUNNER (measured 2026-08-04, probe.yml run 30875501797 on
+# macos-26 — see that run's Actions log):
+#   An earlier revision of this header claimed hosted runners were
+#   unusable because the backend "refuses paravirtualized devices". That
+#   was wrong: the backend never checks for virtualization — it only
+#   enforces threadExecutionWidth == 32 at pipeline creation
+#   (MetalBackend.cpp pipeline cache, D8-3). The hosted runner's GPU
+#   ("Apple Paravirtual device", OS 26.5.2 Build 25F84) reported:
+#     simdgroup width 32          → passes the D8-3 assertion
+#     atomic float supported      → required by all four backward
+#                                   accumulation paths (no CAS fallback)
+#     threadgroup memory 32KB · recommended working set 4778MB ·
+#     sustained-load ratio 1.00
+#   and tools/build_metallib.sh succeeded (~5s). Every GPU capability
+#   this suite depends on is present on the hosted image.
 #
-# CURRENT STATUS: no self-hosted runner is registered yet. Until one
-# exists, this gate is executed manually on maintainer hardware (the same
-# commands as below), and the `push: main` trigger stays commented out so
-# pushes do not queue jobs that no runner will pick up. When a runner is
-# registered: uncomment the push trigger, and keep the runner on an
-# isolated machine (it still runs only maintainer-reviewed code, but
-# defense in depth costs little).
+# STILL UNVERIFIED at the time of this commit: an actual green run of the
+# golden-fixture numerical suites on a hosted runner. The probe measured
+# capabilities only; the suites themselves have not executed there yet.
+# Numerical parity on the paravirtual device is plausible (same Apple GPU
+# underneath) but this repository does not claim it without a measurement.
+# Verification path: trigger one workflow_dispatch run of this workflow;
+# when it passes, replace this paragraph with the run number and enable
+# the push trigger below.
+#
+# NO pull_request TRIGGER — the invariant stays, but its reason changed:
+#   The old reason (a self-hosted runner would execute untrusted PR code
+#   on maintainer hardware) disappeared with the move to hosted runners.
+#   The remaining reasons:
+#   1. Unverified gate (above) — blocking PRs on a gate whose own
+#      infrastructure pass is unproven produces red-X noise that reads
+#      as code failure.
+#   2. Cost/latency — this is the heavy tier (two full core-suite runs,
+#      the app xcodebuild suite, XCFramework; on the order of an hour or
+#      more of hosted macOS time per push). ci.yml is the PR tier by
+#      design (compile-only — see its header).
+#   Revisit after the gate is proven green and its wall-clock measured;
+#   if a PR trigger is opened then, fold the build-surface overlap with
+#   ci.yml at the same time instead of running both on every PR.
 
 name: full-gate
 
 on:
   workflow_dispatch:
-  # Enable after a self-hosted runner is registered:
+  # Enable after one green workflow_dispatch run confirms the numerical
+  # suites pass on a hosted runner (see header — the former "after a
+  # self-hosted runner is registered" condition is obsolete):
   # push:
   #   branches: [main]
 
 jobs:
   full-gate:
-    runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 120
+    runs-on: macos-26
+    # 120 was sized for bare-metal Apple Silicon; hosted wall-clock is
+    # unmeasured, so leave headroom. Tighten after the first green run.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
+
+      - name: Select Xcode 26
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.app || sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
+          swift --version
+
+      - name: Restore Metal toolchain cache
+        id: metal-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/metal-toolchain
+          # Same key as ci.yml — the two workflows share one cache entry.
+          key: metal-toolchain-${{ runner.os }}-xcode26
+
+      - name: Install Metal toolchain
+        run: |
+          if xcrun -sdk macosx metal --version 2>/dev/null; then
+            echo "Metal toolchain already present on image"
+          elif [ -d ~/metal-toolchain ] && xcodebuild -importComponent MetalToolchain -importPath ~/metal-toolchain 2>/dev/null; then
+            echo "Imported Metal toolchain from cache"
+          else
+            xcodebuild -downloadComponent MetalToolchain
+            mkdir -p ~/metal-toolchain
+            xcodebuild -exportComponent MetalToolchain -exportPath ~/metal-toolchain || true
+          fi
+          xcrun -sdk macosx metal --version
+
+      - name: Install xcodegen (app project generation)
+        run: command -v xcodegen || brew install xcodegen
 
       - name: Build
         run: swift build
