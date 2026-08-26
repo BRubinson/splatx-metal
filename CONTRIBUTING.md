@@ -30,7 +30,9 @@ Discussion first so the design can be agreed before you invest the work.
 - **An Apple Silicon Mac.** Training requires a Metal GPU; there is
   deliberately **no CPU training path** (the CPU backend is a forward-only
   verification oracle, not a fallback).
-- **macOS 26 and Xcode 26** (Swift 6.2 toolchain, Metal 3.2).
+- **macOS 15+ with a Swift 6.2 toolchain** for CLI/runtime-source work.
+- **macOS 26 and Xcode 26** for app work, offline `.metallib` compilation,
+  and the complete release gate (Metal 3.2).
 - [xcodegen](https://github.com/yonaskolb/XcodeGen), only if you build the
   macOS app.
 - **No Apple Developer account is needed.** Every gate below runs unsigned

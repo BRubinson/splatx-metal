@@ -3,7 +3,10 @@ import PackageDescription
 
 let package = Package(
     name: "splatx-metal",
-    platforms: [.macOS("26.0"), .iOS("26.0")],
+    // The command-line trainer and runtime-compiled Metal kernels use APIs
+    // available on macOS 15.  The GUI remains free to require newer SDKs,
+    // but keeping the package target at 15 lets the CLI run on current Macs.
+    platforms: [.macOS("15.0"), .iOS("26.0")],
     products: [
         .library(name: "SplatXCore", targets: ["SplatXCore"]),
         .library(name: "SplatXMetal", targets: ["SplatXMetal"]),

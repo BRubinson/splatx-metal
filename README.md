@@ -176,7 +176,8 @@ exactly this training pipeline.
 
 - Apple Silicon Mac (the trainer requires a Metal GPU; there is no CPU
   training path)
-- macOS 26, Xcode 26 (Swift 6.2 toolchain)
+- macOS 15+ with a Swift 6.2 toolchain for the CLI and runtime-compiled kernels
+- macOS 26 and Xcode 26 for the app and offline `.metallib` compilation
 - [xcodegen](https://github.com/yonaskolb/XcodeGen) to build the app
 - A COLMAP dataset (`sparse/0` with cameras/images/points3D in `.bin` or
   `.txt`, plus `images[_N]/` folders) — e.g. the Mip-NeRF 360 scenes
