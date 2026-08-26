@@ -25,12 +25,27 @@ enum AppNotificationText {
     /// The title for a normal completion is the spec's contract string "Training complete", and a
     /// partial completion (thermal abort) uses a distinguishing phrase plus "partial result saved"
     /// to announce that the partial output was preserved.
+    ///
+    /// A **collapsed** run (2026-08-16 — a 15000-iteration run that ended with 0 splats and 3.02 dB
+    /// was announced as "Training complete") gets its own title, and the wording contract is that it
+    /// never contains the word "complete". The verdict is **derived here** from the three values
+    /// this function already receives rather than passed in as a fourth argument: it is a pure
+    /// function of exactly `outcome`/`splatCount`/`finalPSNR`, so deriving it makes it structurally
+    /// impossible for a call site to forget the parameter and go back to announcing success — which
+    /// is the entire failure this round exists to remove.
     static func trainingFinished(project: String,
                                  outcome: SplatXTrainer.RunResult.Outcome,
                                  splatCount: Int,
                                  finalPSNR: Double?) -> Content? {
         let stats = "\(splatCount) splats"
             + (finalPSNR.map { String(format: " · PSNR %.2f dB", $0) } ?? "")
+        let health = RunHealth.evaluate(outcome: outcome, splatCount: splatCount,
+                                        finalPSNR: finalPSNR)
+        if health.isCollapsed {
+            return Content(title: "Training produced no usable result",
+                           body: "\(project) — \(health.shortReason). Open the Train tab for what "
+                               + "to try.")
+        }
         switch outcome {
         case .completed:
             return Content(title: "Training complete", body: "\(project) — \(stats)")

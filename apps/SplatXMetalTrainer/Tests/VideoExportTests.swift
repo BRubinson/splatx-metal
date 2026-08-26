@@ -45,19 +45,146 @@ final class VideoExportTests: XCTestCase {
 
     // MARK: - Resolution preset table (the preset = the short-side pixel count)
 
+    /// 7 presets × 3 aspect ratios. The lower four rows arrived with Cinema GIF (2026-08-05 spec
+    /// §5.3) and are the reason `short / 9 * 16` had to go: 240 and 480 are not multiples of 9, so
+    /// the old integer division produced 416 (true 426.67) and 848 (true 853.33). The corrected
+    /// values are 428 and 854.
+    /// **The nine rows that existed before are unchanged** — that is the regression this table is
+    /// really guarding (1920/2560/3840 came out identical under both formulas).
     func testResolutionTableAllCombos() {
         let table: [(ResolutionPreset, OutputAspect, Int, Int)] = [
+            (.p240, .wide, 428, 240), (.p240, .tall, 240, 428), (.p240, .square, 240, 240),
+            (.p360, .wide, 640, 360), (.p360, .tall, 360, 640), (.p360, .square, 360, 360),
+            (.p480, .wide, 854, 480), (.p480, .tall, 480, 854), (.p480, .square, 480, 480),
+            (.p720, .wide, 1280, 720), (.p720, .tall, 720, 1280), (.p720, .square, 720, 720),
             (.p1080, .wide, 1920, 1080), (.p1080, .tall, 1080, 1920), (.p1080, .square, 1080, 1080),
             (.p1440, .wide, 2560, 1440), (.p1440, .tall, 1440, 2560), (.p1440, .square, 1440, 1440),
             (.uhd4K, .wide, 3840, 2160), (.uhd4K, .tall, 2160, 3840), (.uhd4K, .square, 2160, 2160),
         ]
+        XCTAssertEqual(table.count, ResolutionPreset.allCases.count * OutputAspect.allCases.count)
         for (preset, aspect, w, h) in table {
             let size = VideoExportSettings.pixelSize(preset: preset, aspect: aspect)
             XCTAssertEqual(size.width, w, "\(preset.rawValue) \(aspect.rawValue)")
             XCTAssertEqual(size.height, h, "\(preset.rawValue) \(aspect.rawValue)")
-            XCTAssertEqual(size.width % 2, 0)   // the encoder requires even dimensions
-            XCTAssertEqual(size.height % 2, 0)
+            XCTAssertEqual(size.width % 2, 0,                  // the encoder requires even dimensions
+                           "odd width for \(preset.rawValue) \(aspect.rawValue)")
+            XCTAssertEqual(size.height % 2, 0,
+                           "odd height for \(preset.rawValue) \(aspect.rawValue)")
+            XCTAssertEqual(min(size.width, size.height), preset.shortSide,
+                           "the preset names the short side — \(preset.rawValue)")
         }
+    }
+
+    // MARK: - CinemaExportFormat (2026-08-05 spec §5.2 — the enum that exists so that adding GIF
+    // to VideoContainer, where three ternaries would swallow it, never happens)
+
+    func testCinemaExportFormatAllProperties() {
+        XCTAssertEqual(CinemaExportFormat.allCases, [.mp4, .mov, .gif])
+        XCTAssertEqual(CinemaExportFormat.mp4.videoContainer, .mp4)
+        XCTAssertEqual(CinemaExportFormat.mov.videoContainer, .mov)
+        XCTAssertNil(CinemaExportFormat.gif.videoContainer)   // nil == "not AVAssetWriter"
+        XCTAssertEqual(CinemaExportFormat.mp4.fileExtension, "mp4")
+        XCTAssertEqual(CinemaExportFormat.mov.fileExtension, "mov")
+        XCTAssertEqual(CinemaExportFormat.gif.fileExtension, "gif")
+        XCTAssertEqual(CinemaExportFormat.mp4.contentType, .mpeg4Movie)
+        XCTAssertEqual(CinemaExportFormat.mov.contentType, .quickTimeMovie)
+        XCTAssertEqual(CinemaExportFormat.gif.contentType, .gif)
+        // The save panel's extension and content type must agree for every case — the mismatch
+        // that "an extension-only .gif MOV" would have been.
+        for f in CinemaExportFormat.allCases {
+            XCTAssertEqual(f.contentType.preferredFilenameExtension, f.fileExtension, f.rawValue)
+        }
+        // Where a container exists it must agree with the container's own mapping (one source of
+        // truth for the video path).
+        for f in CinemaExportFormat.allCases {
+            guard let c = f.videoContainer else { continue }
+            XCTAssertEqual(c.fileExtension, f.fileExtension, f.rawValue)
+            XCTAssertEqual(c.contentType, f.contentType, f.rawValue)
+        }
+    }
+
+    /// Regression guard for the second blast radius in spec §5.2: the training timelapse decides
+    /// "GIF" by `videoContainer == nil` (TimelapseEncoder's `guard let container = … else
+    /// { encodeGIF }`). If anyone ever gives gif a container, the timelapse GIF leaks into
+    /// AVAssetWriter — this test fails first.
+    func testTimelapseGifDiscriminatorStillNil() {
+        XCTAssertNil(TimelapseFormat.gif.videoContainer)
+        XCTAssertEqual(TimelapseFormat.mp4.videoContainer, .mp4)
+        XCTAssertEqual(TimelapseFormat.mov.videoContainer, .mov)
+        XCTAssertEqual(VideoContainer.allCases.count, 2)   // still exactly MP4/MOV
+    }
+
+    // MARK: - Format → resolution choices (spec §5.4 — a deliberate departure: the UI restricts
+    // GIF up front, unlike the timelapse's after-the-fact clamp report)
+
+    func testResolutionChoicesPerFormat() {
+        XCTAssertEqual(ResolutionPreset.choices(for: .mp4), [.p1080, .p1440, .uhd4K])
+        XCTAssertEqual(ResolutionPreset.choices(for: .mov), [.p1080, .p1440, .uhd4K])
+        XCTAssertEqual(ResolutionPreset.choices(for: .gif), [.p240, .p360, .p480, .p720])
+        XCTAssertEqual(ResolutionPreset.choices(for: .mp4).count, 3)
+        XCTAssertEqual(ResolutionPreset.choices(for: .gif).count, 4)
+        // Disjoint — so a format switch always needs the clamp (there is no value that survives
+        // both lists and could hide a missing snap).
+        let video = Set(ResolutionPreset.choices(for: .mp4))
+        let gif = Set(ResolutionPreset.choices(for: .gif))
+        XCTAssertTrue(video.isDisjoint(with: gif))
+        // Together they cover every case — no preset is unreachable from the UI.
+        XCTAssertEqual(video.union(gif), Set(ResolutionPreset.allCases))
+        // The GIF ceiling is the resource argument, not a style choice.
+        XCTAssertEqual(gif.map(\.shortSide).max(), 720)
+    }
+
+    // MARK: - setExportFormat's resolution clamp (spec §5.3 — without it the Size segmented
+    // control holds a value that is not one of its options, which AppKit draws as "nothing
+    // selected" while the export quietly keeps using the invisible value)
+
+    @MainActor func testSetExportFormatClampsResolutionIntoTheNewList() {
+        let vm = CinemaViewModel()
+        XCTAssertEqual(vm.exportFormat, .mp4)          // default = MP4
+        XCTAssertEqual(vm.exportResolution, .p1080)
+
+        // MP4 → GIF: 1080p is not offered for GIF, so it snaps to the GIF list's first entry.
+        vm.setExportFormat(.gif)
+        XCTAssertEqual(vm.exportFormat, .gif)
+        XCTAssertEqual(vm.exportResolution, .p240)
+        XCTAssertTrue(ResolutionPreset.choices(for: .gif).contains(vm.exportResolution))
+
+        // GIF → MP4: the return trip must snap too — 240p is not a video option.
+        vm.setExportFormat(.mp4)
+        XCTAssertEqual(vm.exportFormat, .mp4)
+        XCTAssertEqual(vm.exportResolution, .p1080)
+        XCTAssertTrue(ResolutionPreset.choices(for: .mp4).contains(vm.exportResolution))
+    }
+
+    @MainActor func testSetExportFormatKeepsAResolutionTheNewListOffers() {
+        // MP4 → MOV share one list, so a user's 4K choice must survive the switch. A clamp that
+        // reset unconditionally would silently downgrade the output to 1080p.
+        let vm = CinemaViewModel()
+        vm.exportResolution = .uhd4K
+        vm.setExportFormat(.mov)
+        XCTAssertEqual(vm.exportFormat, .mov)
+        XCTAssertEqual(vm.exportResolution, .uhd4K)
+    }
+
+    @MainActor func testSetExportFormatSameFormatIsNoOp() {
+        // Re-selecting the current format must not touch the resolution. Pinned with a value the
+        // current format does not offer, so a clamp that ran unguarded would be visible here —
+        // the equality guard is load-bearing, not an optimization.
+        let vm = CinemaViewModel()
+        vm.exportResolution = .p240                    // out of the MP4 list on purpose
+        vm.setExportFormat(.mp4)                       // same format as the default
+        XCTAssertEqual(vm.exportFormat, .mp4)
+        XCTAssertEqual(vm.exportResolution, .p240)
+    }
+
+    // MARK: - The console's start line (GIF has no codec axis)
+
+    func testConsoleFormatSummaryDropsCodecForGif() {
+        XCTAssertEqual(RenderJob.consoleFormatSummary(codec: .h264, format: .mp4), "H.264 MP4")
+        XCTAssertEqual(RenderJob.consoleFormatSummary(codec: .hevc, format: .mov), "HEVC MOV")
+        // "H.264 GIF" would name a setting that had no effect on the file.
+        XCTAssertEqual(RenderJob.consoleFormatSummary(codec: .h264, format: .gif), "GIF")
+        XCTAssertEqual(RenderJob.consoleFormatSummary(codec: .hevc, format: .gif), "GIF")
     }
 
     // MARK: - Bitrate (the bpp formula — 4K60 HEVC lands in the 50–80Mbps band the research
@@ -259,7 +386,10 @@ final class VideoExportTests: XCTestCase {
         XCTAssertEqual(VideoContainer.mov.fileExtension, "mov")
         XCTAssertEqual(VideoContainer.mp4.contentType, .mpeg4Movie)
         XCTAssertEqual(VideoContainer.mov.contentType, .quickTimeMovie)
-        XCTAssertEqual(CinemaViewModel().exportContainer, .mp4)   // default = MP4
+        // The VM's default is stated on the format axis now (CinemaExportFormat), which is what
+        // the save panel and the sink branch read — VideoContainer stayed a two-case AVFileType
+        // mapping (spec §5.2).
+        XCTAssertEqual(CinemaViewModel().exportFormat, .mp4)   // default = MP4
     }
 
     // MARK: - RunRecord.antialiased (forward compatibility with old manifests — false when
@@ -318,6 +448,48 @@ final class VideoExportTests: XCTestCase {
         XCTAssertEqual(vm.fps, 60)
         vm.setFPS(24)
         XCTAssertEqual(vm.fps, 24)
+        // 15 (2026-08-05 spec §3) — a member of the set, so it is accepted like any other. The
+        // guard is `fpsChoices.contains`, so this would silently keep working after a bad edit to
+        // the list; testFifteenIsAnOfferedRate below is what actually pins the list.
+        vm.setFPS(15)
+        XCTAssertEqual(vm.fps, 15)
+    }
+
+    /// The Rate picker's options are `fpsChoices` verbatim (RenderJob's SegmentedRow maps over it),
+    /// so this is the test that says 15 is *offered*, not merely tolerated by setFPS.
+    ///
+    /// The order is asserted too: SegmentedControl lays the options out in array order, and a Rate
+    /// row that reads 24 · 15 · 30 · 60 would be a real UI defect that no other test would catch.
+    @MainActor func testFifteenIsAnOfferedRate() {
+        XCTAssertEqual(VideoExportSettings.fpsChoices, [15, 24, 30, 60])
+        // Every offered rate must survive its own validator — the picker cannot present a choice
+        // that setFPS then refuses (the segment would read as inert).
+        for rate in VideoExportSettings.fpsChoices {
+            let vm = CinemaViewModel()
+            vm.setFPS(rate)
+            XCTAssertEqual(vm.fps, rate, "the Rate picker offers \(rate) but setFPS refused it")
+        }
+    }
+
+    /// §3.1 — 15fps must not silently land on `bitrate`'s 2Mbps floor. The floor exists to keep a
+    /// tiny frame from being encoded at an unusable rate, but a *selection* that reaches it means
+    /// the user's resolution choice has stopped affecting quality, and at low fps that becomes
+    /// reachable: the smallest combination Cinema can produce (1:1 1080p, HEVC's lower 0.15 bpp)
+    /// is 2.62Mbps at 15fps, which clears it, while roughly 12fps and below would not. Pinned here
+    /// so a future lower rate has to confront the arithmetic instead of inheriting this claim.
+    func testSmallestFifteenFpsSelectionStaysAboveTheBitrateFloor() {
+        let floor = 2_000_000
+        for aspect in OutputAspect.allCases {
+            for preset in ResolutionPreset.videoChoices {
+                let size = VideoExportSettings.pixelSize(preset: preset, aspect: aspect)
+                for codec in VideoCodec.allCases {
+                    let rate = VideoExportSettings.bitrate(width: size.width, height: size.height,
+                                                           fps: 15, codec: codec)
+                    XCTAssertGreaterThan(rate, floor,
+                                         "\(preset) \(aspect) \(codec) at 15fps sits on the floor")
+                }
+            }
+        }
     }
 
     @MainActor func testSetOutputAspectPersists() {

@@ -137,8 +137,21 @@ enum ColmapCameraReader {
         // If the first token of an observation line is integral, a heuristic would mistake it for
         // an image, so the non-comment lines are paired up and only the first of each pair is
         // parsed as a header while the second is skipped.
+        //
+        // That "exactly two lines" premise collided with the shared `lines()` helper, which drops
+        // empty lines (2026-08-15 FIX 1). The observation line is legitimately **empty** whenever an
+        // image carries no 2D points — which is every image in the bundles `ColmapTextWriter` emits
+        // (it writes `NAME\n\n`) and, from this round on, in the rectified bundles the importer
+        // writes as well. With those empty lines filtered away, the array degenerated into
+        // [pose, pose, pose, …] and `i += 2` read **every other view**: a real 110-image project
+        // parsed as 55 views, silently halving the up-axis estimate, the timelapse anchor, and the
+        // Cinema trajectory. So images.txt uses its own reader (`imageDataLines`) that keeps empty
+        // lines and therefore pairs correctly in both shapes:
+        //   real COLMAP        → [pose, obs, pose, obs, …]
+        //   ColmapTextWriter   → [pose, "",  pose, "",  …]
+        // Do NOT "simplify" this back onto `lines()` — that is exactly the regression this fixes.
         var out: [ColmapView] = []
-        let all = try lines(url)
+        let all = try imageDataLines(url)
         var i = 0
         while i < all.count {
             let header = all[i]
@@ -159,10 +172,52 @@ enum ColmapCameraReader {
         }
         return out
     }
+    /// The line reader for `cameras.txt` / `points3D.txt`, where a record is exactly one line and a
+    /// blank line carries no meaning — so dropping empties is correct here.
+    /// `images.txt` must NOT use this: see `imageDataLines`.
+    ///
+    /// Split on `\.isNewline`, **not** on the literal `"\n"` (2026-08-15 FIX 2). Swift's `Character`
+    /// is a grapheme cluster and `"\r\n"` is one such cluster — it is not equal to `"\n"` — so
+    /// `split(separator: "\n")` does not split a CRLF file *anywhere*: the whole model came back as
+    /// a single line, that line began with `#`, and the filter below dropped it. A model exported on
+    /// Windows therefore read as zero cameras and zero views, with no error raised. `isNewline` is
+    /// true for the `"\r\n"` cluster, for a lone `\r` and for `\n`, and treats CRLF as **one**
+    /// separator rather than two, which is what keeps `imageDataLines`' pairing intact.
+    ///
+    /// The core has always handled this (`ColmapLoader.cpp:118-123` — `raw_line` pops a trailing
+    /// `'\r'`); the two Swift readers had not.
     private static func lines(_ url: URL) throws -> [String] {
-        try String(contentsOf: url, encoding: .utf8).split(separator: "\n")
+        try String(contentsOf: url, encoding: .utf8)
+            .split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty && !$0.hasPrefix("#") }
+    }
+
+    /// The line reader for `images.txt` only: comments are dropped and each line is trimmed, but
+    /// **empty lines are preserved** because an empty line is a valid (empty) POINTS2D record and
+    /// removing it breaks the header/observation pairing (see `readImagesTxt`).
+    ///
+    /// Trailing empty lines are the one exception and are removed. Files normally end with a
+    /// newline, so `split` yields at least one trailing empty element; `ColmapTextWriter`'s
+    /// `NAME\n\n` yields two. Feeding those to the loop would parse an empty string as a header and
+    /// throw on the `t.count >= 10` guard. Trimming from the **end** was chosen over a guard inside
+    /// the loop because it cannot shift the index parity of any earlier line — pairing stays exact —
+    /// whereas an in-loop `if header.isEmpty { break/continue }` would also swallow a genuinely
+    /// malformed file in the middle, turning a parse error into a silently truncated view list. That
+    /// is the same class of silent halving this FIX removes.
+    ///
+    /// Split on `\.isNewline` for the same reason as `lines` above (2026-08-15 FIX 2), and here it
+    /// matters twice over: CRLF has to count as **one** separator, or every pose line would be
+    /// followed by a phantom empty line and `i += 2` would pair a pose with the second half of its
+    /// own line ending. `split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)` does
+    /// exactly that — measured, `"a\r\n\r\nb\r\n"` → `["a", "", "b", ""]`, identical to the LF form.
+    private static func imageDataLines(_ url: URL) throws -> [String] {
+        var out = try String(contentsOf: url, encoding: .utf8)
+            .split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.hasPrefix("#") }
+        while let last = out.last, last.isEmpty { out.removeLast() }
+        return out
     }
 }
 

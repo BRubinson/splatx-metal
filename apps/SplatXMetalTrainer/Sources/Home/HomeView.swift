@@ -166,6 +166,25 @@ struct ProjectCard: View {
         }
     }
 
+    /// The card's fallback glyph — shown only until the project has a frame or a render preview to
+    /// show, i.e. between the import finishing and the first image being readable.
+    ///
+    /// It answers "where did this come from", which is the only thing known at that moment, and
+    /// `.capture` gets its own glyph rather than sharing the photo one because "this came off the
+    /// phone" is the distinction a user scanning the grid is actually looking for. `.colmap` shares
+    /// the photo glyph deliberately: it is a folder of stills like `.images`, differing in what
+    /// came *with* them.
+    ///
+    /// Switched exhaustively so a future source kind is a compile error here rather than a silently
+    /// wrong icon. Tests: CaptureImportFlowTests.
+    static func placeholderSymbol(for kind: ProjectSourceKind) -> String {
+        switch kind {
+        case .video: "video"
+        case .capture: "iphone"
+        case .images, .colmap: "photo.on.rectangle"
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .topTrailing) {
@@ -209,7 +228,7 @@ struct ProjectCard: View {
         } else {
             ZStack {
                 SplatXTheme.panel
-                Image(systemName: project.sourceKind == .video ? "video" : "photo.on.rectangle")
+                Image(systemName: Self.placeholderSymbol(for: project.sourceKind))
                     .font(.title)
                     .foregroundStyle(SplatXTheme.textSecondary)
             }

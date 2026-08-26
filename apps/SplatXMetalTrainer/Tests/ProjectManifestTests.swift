@@ -42,6 +42,7 @@ final class ProjectManifestTests: XCTestCase {
         XCTAssertTrue(p.cameraPaths.isEmpty)   // Cinema Task 3 — forward compatible with old manifests
         XCTAssertNil(p.overlay)                // Cinema Task 4 — the overlay is forward compatible too
         XCTAssertFalse(p.cinemaWatermarkSeeded)   // Cinema FIX 5 — the seed flag is forward compatible too
+        XCTAssertTrue(p.autoLevelOnAlign)         // Auto-level Task 2 — absent key means the ON default
     }
 
     // Cinema FIX 5: the once-only watermark seed flag is persisted and restored (the
@@ -108,6 +109,110 @@ final class ProjectManifestTests: XCTestCase {
         q = q.removingRun(id: "20260719-110000", hasSparse: false)
         XCTAssertTrue(q.runs.isEmpty)
         XCTAssertEqual(q.state, .imported)
+    }
+
+    // MARK: the open run's manifest copy (2026-08-05 FIX 1)
+    //
+    // ViewerModel.currentRun is a value snapshot frozen when the run was opened, and RunRecord is a
+    // struct, so a manifest write that lands afterwards never reaches it. timelapseFile is the only
+    // field written after the open (the encode finishes minutes later), which is why the RESULT row
+    // went "encoding…" → "—" at the exact moment the file appeared. `record(matching:)` is the
+    // re-read: identity from the snapshot, contents from the manifest.
+
+    /// Nothing open → nothing to show. The Inspector renders its "Train a run to view its result"
+    /// placeholder off this nil, so it must survive the indirection.
+    func testRecordMatchingNilIsNil() {
+        XCTAssertNil(sample().record(matching: nil))
+    }
+
+    /// **The bug, in its exact shape.** The snapshot has `timelapseFile == nil` (it was taken when
+    /// the run finished, before the encode) and the manifest has the path (the encode landed).
+    /// Returning the snapshot here is what made a file sitting on disk read as "—".
+    func testRecordMatchingPrefersTheManifestCopy() {
+        var project = sample()
+        project.runs[0].timelapseFile = "runs/20260719-100000/timelapse.gif"
+        project.runs[0].finalPSNR = 31.0
+        let snapshot = RunRecord(id: "20260719-100000", outputFile: "output.ply",
+                                 previewFile: "preview.png", outcome: "completed",
+                                 finalPSNR: 24.5, splatCount: 120_000,
+                                 optionsSummary: "factor 4 · 7000it",
+                                 createdAt: Date(timeIntervalSince1970: 100),
+                                 antialiased: false, timelapseFile: nil)
+
+        let resolved = project.record(matching: snapshot)
+
+        XCTAssertEqual(resolved?.id, snapshot.id, "identity still comes from the snapshot")
+        XCTAssertEqual(resolved?.timelapseFile, "runs/20260719-100000/timelapse.gif")
+        // Not just the one field — the whole record is the manifest's, so any later write is seen.
+        XCTAssertEqual(resolved?.finalPSNR, 31.0)
+        XCTAssertEqual(resolved, project.runs[0])
+    }
+
+    /// The run was deleted from the manifest while still open in the viewer. Falling back to the
+    /// snapshot keeps the panel rendering instead of blanking mid-frame — deleteRun clears the
+    /// viewer itself, and this view must not race it into an empty state.
+    func testRecordMatchingFallsBackToTheSnapshotWhenAbsent() {
+        let snapshot = RunRecord(id: "not-in-manifest", outputFile: "output.ply", previewFile: nil,
+                                 outcome: "completed", finalPSNR: 20.0, splatCount: 10,
+                                 optionsSummary: "x", createdAt: Date(timeIntervalSince1970: 1),
+                                 antialiased: true, timelapseFile: "runs/x/timelapse.mp4")
+        XCTAssertEqual(sample().record(matching: snapshot), snapshot)
+    }
+
+    /// The empty-manifest edge of the same fallback (a project whose last run was just removed).
+    func testRecordMatchingWithNoRunsReturnsTheSnapshot() {
+        var project = sample()
+        project.runs = []
+        let snapshot = RunRecord(id: "20260719-100000", outputFile: "output.ply", previewFile: nil,
+                                 outcome: "completed", finalPSNR: nil, splatCount: 1,
+                                 optionsSummary: "x", createdAt: Date(timeIntervalSince1970: 1))
+        XCTAssertEqual(project.record(matching: snapshot), snapshot)
+    }
+
+    // MARK: auto-level (2026-08-04 spec §1.5)
+
+    /// The toggle is per project, defaults to ON, and survives a manifest round trip. The
+    /// default matters: an existing project that never saw this feature must still be
+    /// auto-leveled when the user re-aligns.
+    func testAutoLevelDefaultsOnAndSurvivesRoundTrip() throws {
+        XCTAssertTrue(sample().autoLevelOnAlign)
+        var p = sample()
+        p.autoLevelOnAlign = false
+        let data = try JSONEncoder.project.encode(p)
+        let back = try JSONDecoder.project.decode(Project.self, from: data)
+        XCTAssertFalse(back.autoLevelOnAlign)
+        XCTAssertEqual(back, p)
+    }
+
+    /// A manifest written before this feature has no key at all — it must decode to the ON
+    /// default rather than throwing (the decodeIfPresent forward-compatibility convention).
+    func testOldManifestWithoutAutoLevelKeyDefaultsToOn() throws {
+        let json = """
+        {"id":"F5B2D3A0-0000-0000-0000-000000000000","name":"m","sourceKind":"colmap",
+         "state":"aligned","imageCount":3,"createdAt":"2026-07-19T00:00:00Z",
+         "cinemaWatermarkSeeded":true}
+        """.data(using: .utf8)!
+        let p = try JSONDecoder.project.decode(Project.self, from: json)
+        XCTAssertTrue(p.autoLevelOnAlign)
+        XCTAssertTrue(p.cinemaWatermarkSeeded)   // the sibling flag still decodes as written
+    }
+
+    /// The applied leveling angle rides inside AlignSummary. It is nil in every manifest that
+    /// predates the feature, and nil is also what "auto-level was off / below the threshold"
+    /// records — the UI keys the row's visibility off exactly this nil.
+    func testAlignSummaryLevelTiltPersistsAndToleratesAbsence() throws {
+        var p = sample()
+        p.alignSummary?.levelTiltDegrees = 19.2
+        let data = try JSONEncoder.project.encode(p)
+        let back = try JSONDecoder.project.decode(Project.self, from: data)
+        XCTAssertEqual(back.alignSummary?.levelTiltDegrees, 19.2)
+        XCTAssertEqual(back, p)
+
+        let old = #"{"alignSeconds":42.5,"poseCount":28,"pointCount":5000}"#.data(using: .utf8)!
+        let s = try JSONDecoder.project.decode(AlignSummary.self, from: old)
+        XCTAssertNil(s.levelTiltDegrees)
+        XCTAssertEqual(s.poseCount, 28)
+        XCTAssertEqual(s.pointCount, 5000)
     }
 
     func testStateRawValuesAreStable() {

@@ -8,8 +8,18 @@ import simd
 /// convention is up ≈ −Y), so assuming the viewer's orbit up axis is +Y flips the initial view
 /// upside down (garden, bonsai). The mean of `CameraConversion.upWorld` over all registered views
 /// is the estimate of the scene up — applyCameraFit wires that value into
-/// `CameraController.upAxis` and `OrbitFit.fit(upAxis:)`. The scene data itself is not reoriented
-/// (a non-goal — the export coordinates are preserved).
+/// `CameraController.upAxis` and `OrbitFit.fit(upAxis:)`.
+///
+/// **Correction (2026-08-04).** This file used to state that the scene data is never reoriented
+/// ("a non-goal — the export coordinates are preserved"). That is no longer true: `GroundLevel`
+/// rotates the poses and points at align write time, so `sparse/0` — and everything downstream of
+/// it — is written gravity-aligned (2026-08-04 spec §1; the 2026-07-26 spec carries the same
+/// correction as a footnote). The reason the reversal is safe is that the target is the COLMAP
+/// convention's up, `(0,−1,0)`, not three.js `+Y`.
+///
+/// The estimate below still runs, and on a levelled project it converges on `(0,−1,0)` by
+/// construction — `up'ᵢ = G·upᵢ`, so the normalized mean is `G·up = gravityUp`. That is why the
+/// correction and this orbit axis do not compound (`GroundLevelTests` pins it).
 enum SceneUp {
     /// The normalized mean of upWorld over all views. On a degeneracy (an empty list, or a norm≈0
     /// from cancellation) it falls back to +Y.

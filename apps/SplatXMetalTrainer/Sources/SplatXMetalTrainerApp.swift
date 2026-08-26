@@ -115,6 +115,12 @@ struct SplatXMetalTrainerApp: App {
             } message: {
                 Text(renameError ?? "")
             }
+            // The open source notices, now driven by the Help menu (trainer-help-menu Task 1).
+            // It is attached here — **outside** the `if model.session` branch, on the same layer as
+            // the two alerts above — because the Help menu is reachable on both the Home screen and
+            // inside a project; a presenter inside either branch would leave the menu item dead in
+            // the other. (Its previous home, the BrandFooter, only covered Home and the Inspector.)
+            .sheet(isPresented: $model.showAcknowledgements) { AcknowledgementsView() }
             .frame(minWidth: 1100, minHeight: 720)
             .tint(SplatXTheme.accent)
             .preferredColorScheme(.dark)

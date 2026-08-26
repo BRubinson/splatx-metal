@@ -2,10 +2,13 @@ import SwiftUI
 
 /// The open source notices sheet (audit cleanup Task 7 — the MIT distribution notice requirement).
 ///
-/// Placement decision: this app has no Settings scene, and an About panel (Credits.rtf) would
-/// create dual management in the form of an rtf conversion of the original text — a sheet opened
-/// from BrandFooter, which is permanently present in both Home and the Inspector, satisfies both
-/// discoverability and a single source of truth (the build-time assembled text).
+/// Placement decision (revised in trainer-help-menu Task 1): an About panel (Credits.rtf) would
+/// create dual management in the form of an rtf conversion of the original text, so this stays a
+/// sheet over the assembled text. The entry point is the **Help menu** — on macOS that menu is
+/// where users look for a program's notices and legal information, it is reachable in every state
+/// of the app (Home and inside a project alike), and it keeps the app's own chrome free of legal
+/// text. It previously hung off the BrandFooter, which is only present on Home and in the
+/// Inspector.
 ///
 /// The content is not transcribed by hand: it shows verbatim the bundle resource that the
 /// postBuildScript "Assemble Acknowledgements.txt" assembles from the repo's authoritative NOTICE,

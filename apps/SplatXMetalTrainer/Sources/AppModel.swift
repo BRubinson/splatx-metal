@@ -17,6 +17,10 @@ import Observation
     var console = ConsoleLog()
     /// The ⌘K command palette's visibility state.
     var showPalette = false
+    /// The open source notices sheet's visibility state. It lives on the model (rather than as
+    /// view-local @State) because the entry point is the Help menu — a menu command can only reach
+    /// app-wide state, and the presenter has to sit above the Home/project branch so both show it.
+    var showAcknowledgements = false
 
     func openProject(_ project: Project) {
         var project = project

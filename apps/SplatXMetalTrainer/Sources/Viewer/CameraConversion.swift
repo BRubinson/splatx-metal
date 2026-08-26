@@ -44,6 +44,31 @@ enum CameraConversion {
             SIMD4(tm, 1)))
     }
 
+    /// COLMAP (qvec, tvec) → a free camera pose in the viewport convention (2026-08-04 spec
+    /// §2.2). It is the **exact inverse** of `viewMatrix` above, not the OrbitFit
+    /// approximation — position, orientation (roll included) and fov all reproduce the capture
+    /// camera, so the viewport picture matches the captured image.
+    ///
+    /// Derivation (flip = diag(1,−1,−1), R = the world→camera 3×3 of qvec, t = tvec):
+    ///   CameraPose.viewMatrix       = [Rvᵀ | −Rvᵀ·p]   (Rv = rotation, camera→world)
+    ///   CameraConversion.viewMatrix = flip·[R | t]
+    ///   ⟹ Rvᵀ = flip·R ⟹ Rv = (flip·R)ᵀ = Rᵀ·flipᵀ = Rᵀ·flip   (flip is diagonal → symmetric)
+    ///   ⟹ −Rvᵀ·p = flip·t ⟹ −flip·R·p = flip·t ⟹ p = −Rᵀ·t = C  (the camera center)
+    /// det(flip) = +1, so Rᵀ·flip stays a proper rotation.
+    ///
+    /// The rotation is the same value as `PathPresets.metalCameraRotation(qvec:)` (the Cinema
+    /// capture-trajectory preset) — both are quat(Rᵀ·flip). Delegated to that function rather
+    /// than recomputed here so the two can never drift apart;
+    /// `FirstCameraPoseTests.testPoseRotationMatchesPathPresets` pins the equality.
+    /// `verticalFOV` is supplied by the caller from `OrbitFit.verticalFOV(fy:height:)` — the
+    /// intrinsics live in ColmapModel.cameras, which this function does not take.
+    static func pose(qvec: SIMD4<Double>, tvec: SIMD3<Double>,
+                     verticalFOV: Float) -> CameraPose {
+        CameraPose(position: cameraCenter(qvec: qvec, tvec: tvec),
+                  rotation: PathPresets.metalCameraRotation(qvec: qvec),
+                  fov: verticalFOV)
+    }
+
     /// intrinsics → an asymmetric frustum projection (off-center cx,cy). Right-handed / -Z, Metal
     /// NDC (z∈[0,1]).
     static func projectionMatrix(_ k: ColmapIntrinsics, near: Float, far: Float) -> float4x4 {

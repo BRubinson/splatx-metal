@@ -73,6 +73,21 @@ enum OverlayPlacement {
 
     /// The largest centered rect that fits inside the container at the target aspect ratio (w/h)
     /// — the viewport letterbox mask.
+    ///
+    /// `aspect` is a plain ratio and always has been: Cinema's call site happens to pass
+    /// `cinema.outputAspect.ratio`, but nothing in here is tied to the 16:9/9:16/1:1 enum. The
+    /// `maskRect(ratio:in:)` overload that 2026-08-05 spec §2.5 and its plan call for was
+    /// deliberately not added: Swift would accept it as an argument-label overload, but it would
+    /// be the same body reachable two ways with nothing to tell a reader which is authoritative.
+    ///
+    /// **Cinema is the only call site.** Task 3 reused this for the Train tab's timelapse framing
+    /// preview and `timelapse-viewport-aspect` FIX 1 took that back: aspect-fit is the right
+    /// arithmetic *here*, where the mask previews an independently rendered output scaled down to
+    /// fit the editor, and the wrong one there, where the capture and the viewport share `fovY` so
+    /// only the horizontal extent can differ. See `TrainView.timelapseMask` for the full argument.
+    /// Do not "unify" the two — the shapes coincide on one branch by accident, not by meaning.
+    /// Tests: OverlayPlacementTests plus TimelapseFramingMaskTests, whose OutputAspect cases pin
+    /// the enum → ratio → rect chain this call site depends on.
     static func maskRect(aspect: CGFloat, in container: CGSize) -> CGRect {
         guard aspect > 0, container.width > 0, container.height > 0 else { return .zero }
         if container.width / container.height > aspect {
@@ -539,7 +554,16 @@ struct CinemaFramingOverlay: View {
 
 /// The letterbox dimming outside the mask plus the mask border. It punches the hole with an
 /// even-odd fill.
-private struct LetterboxDim: View {
+///
+/// Internal rather than `private` since 2026-08-05: TrainView layers the same dimming over the
+/// live viewport to show the timelapse capture framing (spec §2.5). It stays in this file instead
+/// of moving to a shared one — Cinema is where the idiom was designed, the second call site is a
+/// reuse of it rather than a new abstraction, and a "Shared/" home would hide that lineage.
+/// Note for the Train call site: this always strokes the mask border, so handing it a mask equal
+/// to the container is not a no-op — see `TrainView.timelapseMask`, which returns nil there.
+/// It is the *dimming* that is shared, not the geometry: since `timelapse-viewport-aspect` FIX 1
+/// the Train mask is computed height-locked in `TrainView` rather than by `OverlayPlacement`.
+struct LetterboxDim: View {
     let mask: CGRect
 
     var body: some View {

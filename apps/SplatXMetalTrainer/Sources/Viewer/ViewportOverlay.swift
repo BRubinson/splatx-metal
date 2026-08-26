@@ -58,6 +58,11 @@ struct ViewportOverlay: View {
     }
 
     /// The frame-to-fit button — the only interactive element.
+    /// `.pointerStyle(.link)` (export-cinema-gif Task 8): applied for the same reason and with the
+    /// same caveats as `TrainView.TimelapseResetButton` — see that header comment for the full
+    /// rationale (why `.link`, why not `NSCursor.push/pop`, and the unverified MTKView-overlay
+    /// hit-testing question). Both are the app's only interactive controls drawn over an `MTKView`,
+    /// so they get the same treatment rather than letting one be an inconsistent outlier.
     private var frameButton: some View {
         Button(action: onFrame) {
             Image(systemName: "viewfinder")
@@ -67,6 +72,7 @@ struct ViewportOverlay: View {
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
+        .pointerStyle(.link)
         .help("Frame to fit")
     }
 }

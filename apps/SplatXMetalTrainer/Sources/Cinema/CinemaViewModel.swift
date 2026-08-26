@@ -38,8 +38,17 @@ import simd
 @MainActor @Observable final class CinemaViewModel {
     /// fps — the denominator for the derived frame display and for frame stepping, and also
     /// the **export frame rate** (time is always authoritative in seconds). Task 5 widened it
-    /// to a choice (24/30/60 — validated by setFPS): the preview step grid and the export
-    /// share the same value, so "the frame you checked with ←→ = the output frame" holds.
+    /// to a choice (validated by setFPS — `VideoExportSettings.fpsChoices` is the list's single
+    /// source): the preview step grid and the export share the same value, so "the frame you
+    /// checked with ←→ = the output frame" holds.
+    ///
+    /// **That sharing has a second edge: `minKeySpacing` below is 0.5/fps, so widening the list
+    /// downward widens the editing tolerances too.** The 2026-08-05 addition of 15 (spec §3.4)
+    /// makes the reachable floor 0.0333s — twice 30fps's 0.0167s, and the same magnitude the
+    /// pre-existing 24fps choice already had at 0.0208s. So this is not a new *kind* of
+    /// behaviour, but the lower bound of the capture snap, the drag neighbour clamp, and the
+    /// no-movement threshold now all sit where 15fps puts them whenever the user selects it.
+    /// Anyone adding a lower rate here is also loosening those three, not only the export.
     private(set) var fps = 30
 
     /// Key time threshold (seconds) = half a frame (0.5/fps) — one constant with three uses
@@ -159,20 +168,54 @@ import simd
     var onPersistAspect: ((OutputAspect) -> Void)?
 
     // MARK: Export settings (Task 5 — session state. Only the aspect ratio is persisted: it is
-    // shared with the overlay WYSIWYG so it belongs to the project, while codec/resolution/fps
-    // are choices made at export time.)
+    // shared with the overlay WYSIWYG so it belongs to the project, while codec/format/resolution
+    // /fps are choices made at export time. That non-persistence is also why the GIF work of the
+    // 2026-08-05 round could introduce a brand-new enum here — see CinemaExportFormat.)
 
     /// Output codec — HEVC by default (spec).
     // Default H.264 (+MP4): the main use is sharing demos and portfolio pieces, so universal
     // playback comes first (user decision 2026-07-27 — spec footnote 3). Choose HEVC when the
     // file needs to be half the size.
+    // It has no meaning under GIF (there is no codec axis) — the EXPORT section dims that row
+    // rather than hiding it, and RenderJob.consoleFormatSummary drops it from the log line.
     var exportCodec: VideoCodec = .h264
-    /// Output container — MP4 by default (footnote 2 ⑤), MOV optional. The save extension and
-    /// the panel type follow this value.
-    var exportContainer: VideoContainer = .mp4
+    /// Output format — the EXPORT section's "File" row (MP4 by default, MOV or GIF; 2026-08-05
+    /// spec §5.1: "Format" is the codec axis, so this axis is called File). It decides the save
+    /// panel's extension and content type, and — through `videoContainer == nil` — which
+    /// FrameSink RenderJob builds.
+    /// **private(set): every change must go through setExportFormat**, which carries the
+    /// resolution clamp. A direct assignment would skip it and leave the Size control showing
+    /// nothing.
+    private(set) var exportFormat: CinemaExportFormat = .mp4
     /// Resolution preset (short side) — the real pixel size combines it with outputAspect
-    /// (VideoExportSettings.pixelSize).
+    /// (VideoExportSettings.pixelSize). Which presets are *offered* depends on exportFormat
+    /// (`ResolutionPreset.choices(for:)`), and the EXPORT section's Size row shows exactly that
+    /// list, so the invariant "the selected preset is one of the current format's choices" is
+    /// maintained by the pair (this stored value, setExportFormat's clamp).
     var exportResolution: ResolutionPreset = .p1080
+
+    /// Export format change (the EXPORT "File" row) — a setter gate because of the **resolution
+    /// clamp** (spec §5.3), following the same shape as setOutputAspect/setFPS.
+    ///
+    /// The offered resolutions differ per format (video 1080p–4K, GIF 240p–720p, disjoint sets),
+    /// so switching GIF+480p → MP4 would leave `exportResolution` outside the new segmented
+    /// control's options. That control renders such a value as **no segment highlighted at all**:
+    /// the user sees an empty row while the export quietly still runs at 480p. Snapping to the
+    /// new list's first entry keeps "what the control shows" and "what renders" the same thing.
+    ///
+    /// The equality guard is not just an optimization — re-selecting the current format must not
+    /// disturb a resolution the user already chose.
+    func setExportFormat(_ format: CinemaExportFormat) {
+        guard format != exportFormat else { return }
+        exportFormat = format
+        let choices = ResolutionPreset.choices(for: format)
+        // `first` rather than a hardcoded default: the choice lists live in ResolutionPreset and
+        // are ordered smallest-first, so this follows them if they are ever re-cut. An empty list
+        // would be a programming error, but it leaves the selection alone instead of crashing.
+        if !choices.contains(exportResolution), let fallback = choices.first {
+            exportResolution = fallback
+        }
+    }
 
     private var playAnchorDate: Date?
     private var playAnchorTime: Double = 0
@@ -223,9 +266,10 @@ import simd
         onPersistAspect?(aspect)
     }
 
-    /// fps change (the export Rate picker) — values outside the allowed set (24/30/60) are
-    /// ignored. The preview frame step and the key snap threshold (minKeySpacing) follow the
-    /// same value (the one-shared-state contract).
+    /// fps change (the export Rate picker) — values outside `VideoExportSettings.fpsChoices` are
+    /// ignored (the set is named rather than repeated here so the two cannot drift). The preview
+    /// frame step and the key snap threshold (minKeySpacing) follow the same value (the
+    /// one-shared-state contract — see the `fps` comment for what that costs at the low end).
     func setFPS(_ value: Int) {
         guard VideoExportSettings.fpsChoices.contains(value), value != fps else { return }
         fps = value

@@ -152,8 +152,15 @@ struct PanelSection<Content: View>: View {
 //
 // **A. Section-level actions = full content width with no label column.**
 //    New Path ▾ / Add Image… / Add SplatX watermark / Render Video… / the Start and Stop CTA /
-//    PresetRow. `.frame(maxWidth: .infinity)` plus their own chrome. There is no label, so full
-//    width is correct.
+//    PresetRow / the View-tab Inspector's EXPORT buttons (PLY / SPZ — RunPropertiesView, added
+//    2026-08-05 spec §1.2 when the window toolbar's Export… menu was removed — plus the
+//    conditional Timelapse (GIF/MP4/MOV) button from §2.2, which uses the same chrome so that a
+//    row appearing and disappearing does not change the shape of the section).
+//    `.frame(maxWidth: .infinity)` plus their own chrome. There is no label, so full width is
+//    correct.
+//    Note the EXPORT buttons are rule A and **not** the 44pt `.primaryAction` CTA: exporting does
+//    not close its section (see the PrimaryActionButtonStyle note below), it is an action offered
+//    alongside the run's read-only rows.
 //    Among those, the elevated chip form (New Path ▾, Add Image…, Add SplatX watermark) is
 //    authoritative in `sectionActionChrome` (app finishing round 6 Task 1 — absorbing the two
 //    previous inline copies).
@@ -245,9 +252,14 @@ struct SegmentOption<Value: Hashable>: Identifiable {
 ///
 /// Instead it generalizes an idiom that already existed in this app (`PresetRow` —
 /// Inspector/InspectorView.swift): `HStack(spacing: 4)` with `.frame(maxWidth: .infinity)` on
-/// each cell, so one cell fills, two split in half, and three split in thirds — **guaranteed by
-/// layout arithmetic**. The colors and chrome use the dark theme tokens as-is
-/// (accent/accentDim/hairline/elevated).
+/// each cell, so one cell fills, two split in half, three split in thirds, and four split in
+/// quarters — **guaranteed by layout arithmetic**, for any count. The colors and chrome use the
+/// dark theme tokens as-is (accent/accentDim/hairline/elevated).
+///
+/// Four cells first appear in EXPORT's Size row under GIF (2026-08-05 spec §5.3). The label
+/// width note below is measured for thirds; at quarters it is ~49pt, so that row shortens its
+/// own labels rather than leaning on minimumScaleFactor
+/// (`ExportInspectorSection.sizeOptions` — the caller owns label text, this control does not).
 ///
 /// **It does not dim on its own** — the disabled presentation is "dim the whole row" (spec §4
 /// rule 5), so the caller applies `.disabled + .opacity` to the row. Dimming again here would

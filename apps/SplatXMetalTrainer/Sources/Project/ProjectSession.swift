@@ -14,9 +14,24 @@ struct ColmapContext {
     /// The camera at the middle index (count/2) of the name-sorted views — the "middle camera"
     /// selection convention.
     let middleView: ColmapView
+    /// The camera at index **0** of the same name-sorted order — the capture's first frame
+    /// (2026-08-04 spec §2.1). It is the anchor of the training start and result viewpoints.
+    let firstView: ColmapView
     /// The mean of the points3D positions. nil when points3D is absent or fails to parse (the
     /// consumer falls back to frameToFit).
     let pointsCentroid: SIMD3<Float>?
+
+    /// `firstView` defaults to `middleView` so that the three-argument construction
+    /// (model:middleView:pointsCentroid:) written before this round keeps compiling unchanged —
+    /// those call sites build single-view fixtures where the two are the same value anyway.
+    /// `load` below always passes both explicitly.
+    init(model: ColmapModel, middleView: ColmapView, firstView: ColmapView? = nil,
+         pointsCentroid: SIMD3<Float>?) {
+        self.model = model
+        self.middleView = middleView
+        self.firstView = firstView ?? middleView
+        self.pointsCentroid = pointsCentroid
+    }
 
     /// Parses sparse/0 (nil on failure or empty views). A pure function — ProjectSession layers the
     /// cache on top.
@@ -32,7 +47,8 @@ struct ColmapContext {
             let sum = points.reduce(SIMD3<Double>()) { $0 + SIMD3<Double>($1) }
             centroid = SIMD3<Float>(sum / Double(points.count))
         }
-        return ColmapContext(model: model, middleView: middle, pointsCentroid: centroid)
+        return ColmapContext(model: model, middleView: middle, firstView: sorted[0],
+                             pointsCentroid: centroid)
     }
 }
 
@@ -72,6 +88,7 @@ struct ColmapContext {
         case .trained: .view
         }
         trainVM.datasetURL = directory   // the project directory = the COLMAP bundle (Task 12 also moved the output path here)
+        trainVM.draft.timelapse = project.timelapse   // the persisted timelapse settings → the training draft (spec §3.6)
         cinemaVM.viewer = viewerVM       // the target the skimmer/playback pose override is applied to
         cinemaVM.projectDirectory = directory   // the target for resolving and copying overlay images (Task 4)
         cinemaVM.load(paths: project.cameraPaths, overlay: project.overlay,
@@ -148,6 +165,22 @@ struct ColmapContext {
         }
     }
 
+    /// Presents the result of a run that **just finished training** (2026-08-04 spec §2.1).
+    /// Identical to showRun except that it arms the first-camera fit anchor first, so the
+    /// result is shown from the same viewpoint the live view started at — "start and finish
+    /// frame the same picture".
+    /// It is a separate entry point rather than a branch inside showRun on purpose: showRun is
+    /// also the history-open and post-delete auto-open path, and those must keep the middle
+    /// camera behavior exactly (spec §2.3).
+    /// Ordering: showRun → openRun → open() (whose frameToFit clears overridePose) →
+    /// applyCameraFit is a fixed order, so the anchor armed here becomes the **final** state.
+    /// CameraFitAnchorTests pins that ordering, and openRun's defer disarms the anchor if the
+    /// load fails before the fit is reached.
+    func showFinishedRun(_ record: RunRecord) {
+        viewerVM.nextFitAnchor = .firstCameraExact
+        showRun(record)
+    }
+
     /// Deleting a run (app round 2 Task 7): remove the runs/<id>/ folder → remove the run from the
     /// manifest and recompute the state (the pure function Project.removingRun) → save. On a folder
     /// deletion failure it warns on the console and continues with the manifest cleanup — so that
@@ -174,8 +207,31 @@ struct ColmapContext {
         }
     }
 
+    /// Persisting the Inspector's Auto-level toggle (2026-08-04 spec §1.5, FIX 1/2 — audit review
+    /// of Task 4). The write-back + save used to live directly in InspectorView's Toggle binding,
+    /// making it the only View body in the app that mutates `project` and calls `store.save`
+    /// itself — every other manifest write goes through a session/view-model method (deleteRun
+    /// above is the precedent: the View calls the method, the method owns the try/catch).
+    /// A save failure here is not a "settings" write to shrug off on the console (which starts
+    /// collapsed, AppModel.consoleExpanded = false) — it changes the coordinate system the next
+    /// Align run actually writes to sparse/0, so it is surfaced the same way AlignViewModel.start
+    /// and TrainViewModel surface a manifest-save failure ("Audit cleanup Task 5"): through
+    /// alignVM.errorMessage, which AlignView already renders as a red banner.
+    func setAutoLevelOnAlign(_ on: Bool, model: AppModel) {
+        project.autoLevelOnAlign = on
+        do { try model.store.save(project) }
+        catch {
+            alignVM.errorMessage = "Auto-level setting could not be saved"
+                + " — it may revert after the app restarts."
+                + " (\(error.localizedDescription))"
+            model.console.append("⚠ auto-level setting save failed: \(error.localizedDescription)")
+        }
+    }
+
     // The COLMAP parse cache for the camera fit. .none = not attempted, .some(nil) = a confirmed
-    // failure (no retry — sparse/0 is unchanged for the session, so failures are cached too).
+    // failure (cached too — a failed parse of the same file fails again).
+    // The cache is valid only until sparse/0 is rewritten, which a re-align does mid-session
+    // (AlignViewModel.start) — invalidateColmapContext below is what keeps the two in step.
     private var colmapContextCache: ColmapContext??
 
     /// Lazily parses sparse/0 once and returns the camera fit context. Failure gives nil (the
@@ -185,5 +241,16 @@ struct ColmapContext {
         let ctx = ColmapContext.load(sparse0: directory.appending(path: "sparse/0"))
         colmapContextCache = .some(ctx)
         return ctx
+    }
+
+    /// Drops the parse cache after sparse/0 has been rewritten (a re-align). **Must be called on
+    /// every successful write**, not only when auto-level ran: the pose refinement alone already
+    /// moves the fit, and with auto-level on (the default) the write rotates the whole world, so a
+    /// stale context would feed the *previous* coordinate system to the `.firstCameraExact`
+    /// viewport override, the timelapse capture anchor, and the Cinema trajectory — silently, for
+    /// the rest of the session. Reachable with the mouse alone: train (fills the cache) →
+    /// re-align → train.
+    func invalidateColmapContext() {
+        colmapContextCache = nil
     }
 }

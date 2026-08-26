@@ -331,7 +331,10 @@ a resident-vs-host equivalence check.
 
 - **Apple Silicon only.** No CPU training path, no Intel Mac support, no
   Windows/Linux/CUDA — and none planned; being native is the point.
-- **macOS 26 / Xcode 26 required** (Metal 3.2 toolchain).
+- **Toolchain split.** The CLI and runtime-compiled kernels build on macOS 15+;
+  the app, offline `.metallib` compilation, and the complete release gate need
+  macOS 26 with Xcode 26 (its Metal toolchain component, not the MSL version —
+  `-std=metal3.2` itself is available from macOS 15).
 - **gsplat is pinned at commit `77ab983`.** Newer gsplat features and
   numerics changes are adopted deliberately or not at all — the committed
   goldens define correctness, so "tracking upstream" would be a regression

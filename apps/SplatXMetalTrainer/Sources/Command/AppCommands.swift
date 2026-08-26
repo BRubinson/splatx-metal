@@ -17,6 +17,8 @@ enum AppCommandID {
     static let cinemaDeleteKey = "cinema.deleteKey"
     static let cinemaStepBack = "cinema.stepBack"
     static let cinemaStepForward = "cinema.stepForward"
+    /// The open source notices (Help menu).
+    static let openSourceLicenses = "help.openSourceLicenses"
 }
 
 extension CommandRegistry {
@@ -136,11 +138,21 @@ extension CommandRegistry {
             shortcut: KeyboardShortcut("k", modifiers: .command),
             run: { model.showPalette = true }
         ))
+        // The open source notices, moved out of the BrandFooter into the Help menu. It goes through
+        // the registry because that is what the menu's button(_:) helper reads; the intended side
+        // effect is that the same entry becomes searchable in the ⌘K palette.
+        // **No keyboard shortcut** — this app gives none to Help items (nor does macOS by
+        // convention).
+        registry.register(AppCommand(
+            id: AppCommandID.openSourceLicenses,
+            title: "Open Source Licenses",
+            run: { model.showAcknowledgements = true }
+        ))
         return registry
     }
 }
 
-/// The menu bar: File (Import) / View (Home, tabs, console, palette).
+/// The menu bar: File (Import) / View (Home, tabs, console, palette) / Help (open source notices).
 struct AppCommands: Commands {
     let registry: CommandRegistry
 
@@ -166,6 +178,15 @@ struct AppCommands: Commands {
             button(AppCommandID.cinemaStepForward)
             Divider()
             button(AppCommandID.openPalette)
+        }
+        // `replacing:` rather than `after:` — the default Help group's "<app name> Help" item opens
+        // a help book, and this app declares none (project.yml's `info: properties` has no
+        // CFBundleHelpBookFolder/CFBundleHelpBookName, and nothing else injects one), so that item
+        // can only produce a "Help isn't available" dialog. Replacing the group removes the dead
+        // item and leaves Help with only what actually works. If a help book is ever shipped, turn
+        // this back into `CommandGroup(after: .help)`.
+        CommandGroup(replacing: .help) {
+            button(AppCommandID.openSourceLicenses)
         }
     }
 

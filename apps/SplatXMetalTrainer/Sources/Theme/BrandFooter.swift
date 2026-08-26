@@ -8,12 +8,14 @@ import AppKit
 /// buttons (NSWorkspace.open, with a link cursor on hover).
 /// The fonts, colors, and spacing are identical to the previous static presentation — only the
 /// clickability is revealed through the cursor (no decoration added).
+///
+/// trainer-help-menu Task 1: the "Open Source Licenses" entry point that used to live here moved to
+/// the Help menu. The old justification — "the footer is this app's only permanent surface, since
+/// there is no separate Settings scene" — was wrong about *permanent*: the footer is only present
+/// on Home and in the Inspector (it vanishes wherever the Inspector is not shown), whereas the menu
+/// bar is present in every state of the app and is where macOS users look for notices anyway. What
+/// remains here is branding only.
 struct BrandFooter: View {
-    /// The open source notices sheet (audit cleanup Task 7). The footer is a shared component
-    /// permanently present in both Home and the Inspector, so the entry point lives here — it is
-    /// this app's only permanent surface, since there is no separate Settings scene.
-    @State private var showAcknowledgements = false
-
     var body: some View {
         VStack(spacing: 1) {
             LinkText(text: "SplatX Metal",
@@ -25,23 +27,11 @@ struct BrandFooter: View {
                      color: SplatXTheme.textSecondary,
                      tracking: 1.5,
                      url: "https://postmedia.ai")
-            // Visual hierarchy: below the wordmarks (no tracking, secondary) — keeping the
-            // no-added-decoration principle.
-            Button { showAcknowledgements = true } label: {
-                Text("Open Source Licenses")
-                    .font(.caption2)
-                    .foregroundStyle(SplatXTheme.textSecondary)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .pointerStyle(.link)
-            .padding(.top, 2)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 10)
         .background(SplatXTheme.panel)
         .overlay(alignment: .top) { SplatXTheme.hairline.frame(height: 1) }
-        .sheet(isPresented: $showAcknowledgements) { AcknowledgementsView() }
     }
 }
 

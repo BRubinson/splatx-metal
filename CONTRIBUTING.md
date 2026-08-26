@@ -186,6 +186,6 @@ Day-to-day development happens in a private repository; this public
 repository is the **release publication channel**, updated as squashed
 release snapshots. Pull requests are received **here**: they are reviewed
 here, merged here, and also imported into the private tree so the next
-release snapshot contains your change. Your merge commit remains in this
+release snapshot contains your change. Your squashed commit remains in this
 repository's history. Issues and Discussions here are the project's public
 tracker of record.

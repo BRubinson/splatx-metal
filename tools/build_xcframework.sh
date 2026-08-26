@@ -38,8 +38,11 @@ REPO_ROOT=$(dirname -- "$SCRIPT_DIR")
 BUILD_DIR="$REPO_ROOT/build"
 OUT="$BUILD_DIR/SplatX.xcframework"
 
-# Minimum deployment targets — matches Package.swift platforms (.macOS("26.0"), .iOS("26.0")).
-MACOS_MIN=26.0
+# Minimum deployment targets — matches Package.swift platforms (.macOS("15.0"), .iOS("26.0")).
+# Hand-maintained against Package.swift: this script does not use SwiftPM, so nothing checks the
+# pair. A mismatch does not fail any gate — the XCFramework simply ships a narrower slice than the
+# package promises, and a consumer on the lower OS cannot link it. Change both or neither.
+MACOS_MIN=15.0
 IOS_MIN=26.0
 
 CXXFLAGS="-std=c++17 -O2 -DNDEBUG"

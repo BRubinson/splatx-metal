@@ -292,6 +292,154 @@ final class CinemaPanelRuleTests: XCTestCase {
                                                         isLocked: false))
     }
 
+    // MARK: The EXPORT section's format-dependent presentation (2026-08-05 spec §5.4/§5.7–§5.9)
+
+    /// §5.9 — the codec row is disabled under GIF and only under GIF. The decision is derived
+    /// from `videoContainer == nil`, the same discriminator the sink branch uses, so a format
+    /// cannot end up encoding through ImageIO while still offering HEVC/H.264.
+    /// Note what is **not** asserted: that the row is hidden. It must stay laid out and dim —
+    /// a row that disappears makes the section's height jump on every File change.
+    @MainActor
+    func testCodecRowDisabledOnlyForGif() {
+        XCTAssertTrue(ExportInspectorSection.codecRowDisabled(format: .gif))
+        XCTAssertFalse(ExportInspectorSection.codecRowDisabled(format: .mp4))
+        XCTAssertFalse(ExportInspectorSection.codecRowDisabled(format: .mov))
+    }
+
+    /// §5.3/§5.4 — the Size row follows the format, and the labels shorten once the row splits
+    /// four ways (~49pt per cell). The values must stay the real presets: only the displayed
+    /// text is abbreviated.
+    @MainActor
+    func testSizeOptionsFollowFormatAndShortenAtFourCells() {
+        let video = ExportInspectorSection.sizeOptions(for: .mp4)
+        XCTAssertEqual(video.map(\.value), ResolutionPreset.videoChoices)
+        // Three cells: the full preset names, unchanged from before GIF existed.
+        XCTAssertEqual(video.map(\.label), ["1080p", "1440p", "4K"])
+        XCTAssertEqual(ExportInspectorSection.sizeOptions(for: .mov).map(\.value),
+                       ResolutionPreset.videoChoices)
+
+        let gif = ExportInspectorSection.sizeOptions(for: .gif)
+        XCTAssertEqual(gif.map(\.value), ResolutionPreset.gifChoices)
+        // Four cells: suffix-less numbers (the first four-cell SegmentedRow in this app).
+        XCTAssertEqual(gif.map(\.label), ["240", "360", "480", "720"])
+        // The abbreviation is keyed on the cell count, not on the format — every label is
+        // exactly the preset's short side, so the mapping is never a hand-kept table.
+        for option in gif {
+            XCTAssertEqual(option.label, "\(option.value.shortSide)")
+        }
+    }
+
+    /// §5.8 — the size caption appears only under GIF, and it states the two facts the user
+    /// needs before pressing Render: how many frames are kept (all of them — decision 4) and
+    /// how large the sequence is. It is deliberately not a proposal to reduce anything.
+    @MainActor
+    func testGifSizeNoteReportsFramesAndPixels() {
+        let note = ExportInspectorSection.gifSizeNote(format: .gif, frames: 301,
+                                                      width: 854, height: 480)
+        XCTAssertNotNil(note)
+        XCTAssertTrue(note!.contains("301"), note ?? "")
+        XCTAssertTrue(note!.contains("854×480"), note ?? "")
+
+        // It tracks its inputs — a different path length and a different preset must produce a
+        // different sentence (a constant string would pass the contains() checks above).
+        let other = ExportInspectorSection.gifSizeNote(format: .gif, frames: 120,
+                                                       width: 1280, height: 720)
+        XCTAssertNotNil(other)
+        XCTAssertNotEqual(note, other)
+        XCTAssertTrue(other!.contains("120"), other ?? "")
+        XCTAssertTrue(other!.contains("1280×720"), other ?? "")
+
+        // Video formats never show it, however large the sequence.
+        XCTAssertNil(ExportInspectorSection.gifSizeNote(format: .mp4, frames: 301,
+                                                        width: 3840, height: 2160))
+        XCTAssertNil(ExportInspectorSection.gifSizeNote(format: .mov, frames: 301,
+                                                        width: 3840, height: 2160))
+        // Degenerate inputs (no path selected → 0 frames) produce no caption rather than
+        // "0 frames … 0 MB".
+        XCTAssertNil(ExportInspectorSection.gifSizeNote(format: .gif, frames: 0,
+                                                        width: 854, height: 480))
+        XCTAssertNil(ExportInspectorSection.gifSizeNote(format: .gif, frames: 10,
+                                                        width: 0, height: 0))
+    }
+
+    /// §5.7 — the fps caption fires only where the 1/100s quantization actually bites. 60fps
+    /// is 0.0167s, which many viewers clamp to 0.1s (≈10fps); 24 (0.0417s) and 30 (0.0333s)
+    /// are safe. The training timelapse never hit this because its fps is capped at 30.
+    @MainActor
+    func testGifFpsNoteWarnsOnlyAtSixtyUnderGif() {
+        XCTAssertNotNil(ExportInspectorSection.gifFpsNote(format: .gif, fps: 60))
+        XCTAssertNil(ExportInspectorSection.gifFpsNote(format: .gif, fps: 24))
+        XCTAssertNil(ExportInspectorSection.gifFpsNote(format: .gif, fps: 30))
+        // Video formats have no such quantization at any rate.
+        for fps in VideoExportSettings.fpsChoices {
+            XCTAssertNil(ExportInspectorSection.gifFpsNote(format: .mp4, fps: fps))
+            XCTAssertNil(ExportInspectorSection.gifFpsNote(format: .mov, fps: fps))
+        }
+        // The threshold is the delay, not the literal 60: exactly 0.02s (50fps) is still safe,
+        // anything faster is not. Pinning this keeps a future 48/50 choice classified by
+        // arithmetic instead of by memory.
+        XCTAssertNil(ExportInspectorSection.gifFpsNote(format: .gif, fps: 50))
+        XCTAssertNotNil(ExportInspectorSection.gifFpsNote(format: .gif, fps: 51))
+        // Guard against a division by zero in a degenerate call.
+        XCTAssertNil(ExportInspectorSection.gifFpsNote(format: .gif, fps: 0))
+        // The warning names the offending rate so the caption is actionable.
+        XCTAssertTrue(ExportInspectorSection.gifFpsNote(format: .gif, fps: 60)!.contains("60"))
+    }
+
+    /// The 2026-08-05 addition of 15 to `fpsChoices` (spec §3.3) is the first exercise of the
+    /// claim the comment above makes — that the *classifier* is arithmetic on the delay, so a new
+    /// rate needs no edit to the gate. It did need one to the **prose**: `timelapse-viewport-aspect`
+    /// FIX 1 found the caption still naming only "24 or 30", so a user who had just been given 15
+    /// was steered away from it. The second half of this test is what turns "someone will
+    /// remember" into a failure.
+    ///
+    /// Written as a sweep over `fpsChoices` rather than `gifFpsNote(15) == nil` alone, because the
+    /// interesting property is the partition of the whole list: exactly one offered rate warns, and
+    /// the caption recommends **every** rate on the other side of the partition. A future rate
+    /// below 50 fails the second assertion until it is named; one above 50 fails the first and
+    /// forces the author to decide what the advice should now read.
+    @MainActor
+    func testAddingFifteenNeedsNoChangeToTheFpsCaption() {
+        XCTAssertNil(ExportInspectorSection.gifFpsNote(format: .gif, fps: 15),
+                     "1/15 = 0.0667s is far above the 0.02s clamp — no caption is correct")
+        let warned = VideoExportSettings.fpsChoices.filter {
+            ExportInspectorSection.gifFpsNote(format: .gif, fps: $0) != nil
+        }
+        XCTAssertEqual(warned, [60], "60 is the only offered rate under the 0.02s clamp")
+        let note = ExportInspectorSection.gifFpsNote(format: .gif, fps: 60)
+        for safe in VideoExportSettings.fpsChoices where !warned.contains(safe) {
+            XCTAssertTrue(note?.contains("\(safe)") == true,
+                          "the caption tells the user what to switch to, so it must name \(safe)")
+        }
+    }
+
+    /// FIX 1 — the two GIF-only captions gate on **different** discriminators on purpose, and this
+    /// pins which is which so neither drifts into the other by tidying.
+    ///
+    /// `gifSizeNote` (and `codecRowDisabled`, and `consoleFormatSummary`) claim things about the
+    /// **encoder arm** — no codec axis, ImageIO buffers frames — so they gate on
+    /// `videoContainer == nil` and a future non-AVAssetWriter format inherits them correctly.
+    /// `gifFpsNote` claims something about the **GIF container itself** (delays quantised to
+    /// 1/100s); APNG and WebP time frames differently, so it gates on `== .gif` and a future
+    /// ImageIO format must *not* inherit it. Both loops run over allCases, so adding a case forces
+    /// the decision rather than letting it default.
+    @MainActor
+    func testGifCaptionDiscriminatorsAreDeliberate() {
+        for format in CinemaExportFormat.allCases {
+            let sizeNote = ExportInspectorSection.gifSizeNote(format: format, frames: 301,
+                                                              width: 854, height: 480)
+            XCTAssertEqual(sizeNote != nil, format.videoContainer == nil,
+                           "\(format): the size caption follows the encoder arm")
+            XCTAssertEqual(ExportInspectorSection.codecRowDisabled(format: format),
+                           format.videoContainer == nil,
+                           "\(format): the codec row follows the encoder arm")
+
+            let fpsNote = ExportInspectorSection.gifFpsNote(format: format, fps: 60)
+            XCTAssertEqual(fpsNote != nil, format == .gif,
+                           "\(format): the fps caption is a GIF container fact, not an arm fact")
+        }
+    }
+
     // MARK: Prose moved into the ⓘ popover by the caption diet (preserving the FIX 19 ③
     // correction)
 

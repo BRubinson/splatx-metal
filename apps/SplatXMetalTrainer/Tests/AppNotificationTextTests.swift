@@ -34,6 +34,47 @@ final class AppNotificationTextTests: XCTestCase {
         XCTAssertEqual(c?.body, "garden — partial result saved · 5000 splats")
     }
 
+    /// 2026-08-16: the run that started this. `outcome == .completed` with zero splats used to
+    /// produce the literal banner "Training complete — LiDAR_… — 0 splats · PSNR 3.02 dB". The
+    /// contract now is that the word "complete" cannot appear for a run that produced nothing.
+    func testCollapsedRunIsNotAnnouncedAsComplete() {
+        let c = AppNotificationText.trainingFinished(
+            project: "LiDAR_20260814_155238", outcome: .completed, splatCount: 0, finalPSNR: 3.02)
+        XCTAssertNotNil(c)                                        // it must still be announced
+        XCTAssertNotEqual(c?.title, "Training complete")
+        XCTAssertFalse(c?.title.lowercased().contains("complete") ?? true)
+        XCTAssertEqual(c?.title, "Training produced no usable result")
+        XCTAssertTrue(c?.body.contains("LiDAR_20260814_155238") ?? false)
+        XCTAssertTrue(c?.body.contains("no splats survived") ?? false)
+        // A notification cannot hold the full advice paragraph, so it points at where it lives.
+        XCTAssertTrue(c?.body.contains("Train tab") ?? false)
+    }
+
+    /// The verdict is derived inside the assembly function from the values it already receives
+    /// (not passed in), so a caller cannot forget it — a render worse than a blank gray image is
+    /// caught the same way as a zero count.
+    func testDegenerateRenderIsAlsoNotAnnouncedAsComplete() {
+        let c = AppNotificationText.trainingFinished(
+            project: "garden", outcome: .completed, splatCount: 900_000, finalPSNR: 3.02)
+        XCTAssertEqual(c?.title, "Training produced no usable result")
+        XCTAssertTrue(c?.body.contains("3.02 dB") ?? false)
+    }
+
+    /// A thermal abort keeps its own wording even at zero splats — it is a normal termination
+    /// (README "Exit codes": exit 2 is not an error), and the "stopped early" phrasing already tells the
+    /// truth about why there is little to show.
+    func testThermalAbortAtZeroSplatsKeepsItsOwnWording() {
+        let c = AppNotificationText.trainingFinished(
+            project: "garden", outcome: .thermalAborted, splatCount: 0, finalPSNR: nil)
+        XCTAssertEqual(c?.title, "Training stopped early (thermal)")
+    }
+
+    /// A cancellation at zero splats is still the user's own action — still no notification.
+    func testCancelledAtZeroSplatsStillProducesNoNotification() {
+        XCTAssertNil(AppNotificationText.trainingFinished(
+            project: "garden", outcome: .cancelled, splatCount: 0, finalPSNR: 1.0))
+    }
+
     func testTrainingCancelledProducesNoNotification() {
         // Cancellation is an action the user took themselves — no notification (spec: the
         // same intent as avoiding over-notification).

@@ -68,20 +68,13 @@ struct RootDetail: View {
             session.cinemaVM.setActive(session.tab == .cinema)
             openLatestIfNeeded(session.tab)
         }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                if session.tab == .view, session.viewerVM.currentRun != nil {
-                    Menu {
-                        ForEach(ExportFormat.allCases, id: \.self) { fmt in
-                            Button(fmt.menuTitle) { exportCurrentRun(as: fmt) }
-                        }
-                    } label: {
-                        Label("Export…", systemImage: "square.and.arrow.up")
-                    }
-                    .help("Export as PLY or SPZ")
-                }
-            }
-        }
+        // There is no `.toolbar` here on purpose (2026-08-05 spec §1.2). The window toolbar used to
+        // carry the only Export… entry point for the open run; it now lives in the Inspector's
+        // EXPORT section (RunPropertiesView), next to the run properties it acts on. The item was
+        // deleted whole rather than made conditionally empty — an empty `.primaryAction` still
+        // reserves its slot, which is what "training, result 아래쪽에 버튼을 배치하는게 더 깔끔할 거
+        // 같아" was asking us to get rid of. Do not reintroduce it: two entry points for one action
+        // was the explicitly rejected option (spec §0 decision 3).
         .inspector(isPresented: .constant(true)) {
             InspectorView(model: model, session: session)
                 .inspectorColumnWidth(min: 240, ideal: 280, max: 400)
@@ -105,13 +98,5 @@ struct RootDetail: View {
             await session.viewerVM.openRun(latest, projectDirectory: session.directory,
                                            colmapContext: session.loadColmapContext())
         }
-    }
-
-    /// App round 2 Task 7: the actual logic was generalized into ExportService.presentPanel —
-    /// shared with the RUNS context menu.
-    /// App round 4 FIX 3: the format is chosen up front in the toolbar Export… menu (PLY/SPZ).
-    private func exportCurrentRun(as format: ExportFormat) {
-        guard let record = session.viewerVM.currentRun else { return }
-        ExportService.presentPanel(for: record, session: session, model: model, format: format)
     }
 }

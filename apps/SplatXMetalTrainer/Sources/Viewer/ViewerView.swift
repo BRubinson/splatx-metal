@@ -38,6 +38,15 @@ import CryptoKit
         }
     }
     var camera = CameraController()
+    /// The camera anchor the **next** `applyCameraFit` uses (2026-08-04 spec §2.3). It is a
+    /// one-shot: applyCameraFit reads it and immediately resets it to `.middleOrbit`, so any
+    /// path that does not set it (opening a past run from the history, the standalone PLY
+    /// viewer) keeps the previous behavior byte for byte.
+    /// The two writers both live in the training flow — TrainViewModel.start (the live view's
+    /// starting viewpoint) and ProjectSession.showFinishedRun (the result presentation).
+    /// @ObservationIgnored: no view reads it — it is an internal one-shot ledger, the same
+    /// convention as CinemaViewModel.lastAppliedPreviewPose.
+    @ObservationIgnored var nextFitAnchor: CameraFitAnchor = .middleOrbit
     var errorMessage: String?
     var loading = false
 
@@ -189,6 +198,13 @@ import CryptoKit
     /// the Inspector, Export, and RenderJob would see a ghost run.
     func openRun(_ record: RunRecord, projectDirectory: URL,
                  colmapContext: ColmapContext? = nil) async {
+        // The fit anchor is one-shot (2026-08-04 spec §2.3). applyCameraFit below consumes it on
+        // the success path; this defer covers **every** other exit — an open() abort, a load
+        // failure, and the `switched == false` branch — so an armed anchor can never leak into
+        // the next, unrelated openRun. The .middleOrbit paths must stay byte-identical, and a
+        // leaked anchor would silently move a history open onto the first camera.
+        // (Idempotent on the success path: applyCameraFit already reset it.)
+        defer { nextFitAnchor = .middleOrbit }
         let switched = record.id != lastRunID
         currentRun = record
         let url = projectDirectory.appendingPathComponent("runs/\(record.id)/\(record.outputFile)")
@@ -248,6 +264,11 @@ import CryptoKit
     /// coupling.)
     @discardableResult
     func applyCameraFit(context: ColmapContext?) -> Bool {
+        // The anchor is consumed **before** the guard (2026-08-04 spec §2.3, one-shot): if a
+        // degenerate context let the flag survive, the next unrelated fit — opening a past run
+        // from the history — would silently inherit the first-camera anchor.
+        let anchor = nextFitAnchor
+        nextFitAnchor = .middleOrbit
         guard let context, let centroid = context.pointsCentroid else { return false }
         let view = context.middleView
         // The scene up axis (the mean up over all registered views — the 2026-07-26 viewer
@@ -265,6 +286,24 @@ import CryptoKit
         camera.setOrbit(target: fit.target, distance: fit.distance, yaw: fit.yaw, pitch: fit.pitch)
         if let k = context.model.cameras[view.cameraId] {
             camera.verticalFOV = OrbitFit.verticalFOV(fy: k.fy, height: k.height)
+        }
+        // .firstCameraExact (2026-08-04 spec §2.3): the middle-camera orbit fit above stays as
+        // the **underlying orbit state** and the first camera's exact pose is layered on top as
+        // an override. Keeping the orbit underneath is what makes the first drag sane —
+        // adoptOverridePose inverts the override using `target` as the centroid argument, so
+        // without a fitted target the distance would be derived from a stale orbit.
+        // The assignment MUST come **after** setOrbit: setOrbit clears overridePose on its first
+        // line (the system-setting branch of the CameraController contract), so the reverse
+        // order silently loses the pose (pinned by CameraFitAnchorTests).
+        // The fov comes from the **first** view's intrinsics; if that camera id is missing from
+        // the model the value just set from the middle view stands (the same lenient shape as
+        // the fov fallback in PathPresets.captureTrajectory).
+        if anchor == .firstCameraExact {
+            let first = context.firstView
+            let fov = context.model.cameras[first.cameraId]
+                .map { OrbitFit.verticalFOV(fy: $0.fy, height: $0.height) } ?? camera.verticalFOV
+            camera.overridePose = CameraConversion.pose(qvec: first.qvec, tvec: first.tvec,
+                                                        verticalFOV: fov)
         }
         return true
     }

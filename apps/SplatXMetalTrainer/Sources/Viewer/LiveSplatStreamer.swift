@@ -213,6 +213,13 @@ final class LiveSplatStreamer: @unchecked Sendable {
     /// A MainActor notification on every swap completion (the displayed splat count) — for wiring
     /// ViewerModel.currentSplats.
     private let onSwap: (@MainActor @Sendable (Int) -> Void)?
+    /// The timelapse capture hook (2026-08-04 spec §3.2). It is awaited **inline in the swap
+    /// pipeline**, right after the swap completes: the pipeline is serial, so the next encode
+    /// cannot start while a capture holds the just-swapped chunk, and the two-set MetalBuffer
+    /// invariant ("set N is rewritten only after the previous swap's removeChunk finished") is
+    /// preserved structurally — no third buffer set and no second encode.
+    /// nil when the timelapse is off, which is the byte-for-byte previous behaviour.
+    private let onSwappedChunk: (@Sendable (SplatChunk, Int) async -> Void)?
 
     private let mailbox = SnapshotMailbox()
     private let stopLock = NSLock()
@@ -223,10 +230,12 @@ final class LiveSplatStreamer: @unchecked Sendable {
     @MainActor
     init(device: MTLDevice,
          acquireRenderer: @escaping @MainActor @Sendable () -> SplatRenderer?,
-         onSwap: (@MainActor @Sendable (Int) -> Void)? = nil) {
+         onSwap: (@MainActor @Sendable (Int) -> Void)? = nil,
+         onSwappedChunk: (@Sendable (SplatChunk, Int) async -> Void)? = nil) {
         self.device = device
         self.acquireRenderer = acquireRenderer
         self.onSwap = onSwap
+        self.onSwappedChunk = onSwappedChunk
         self.state = State()
         var continuation: AsyncStream<Void>.Continuation!
         let wakeups = AsyncStream<Void>(bufferingPolicy: .bufferingNewest(1)) { continuation = $0 }
@@ -345,6 +354,14 @@ final class LiveSplatStreamer: @unchecked Sendable {
                     state.latestIter = iter
                     state.splatCount = n
                     onSwap?(n)
+                }
+
+                // The timelapse capture (spec §3.2) — after the swap, so the frame that is
+                // captured is exactly the model that reached the screen. The hook itself decides
+                // whether this iter is a capture point, and when it is not it returns
+                // immediately.
+                if let onSwappedChunk {
+                    await onSwappedChunk(chunk, iter)
                 }
             }
         }

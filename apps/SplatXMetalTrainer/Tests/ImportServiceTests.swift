@@ -55,7 +55,11 @@ final class ImportServiceTests: XCTestCase {
     }
 
     func testAssembleColmapCopiesTxtSetAndImages() throws {
-        for f in ["cameras.txt", "images.txt", "points3D.txt"] { try touch("cm/sparse/0/\(f)") }
+        for f in ["images.txt", "points3D.txt"] { try touch("cm/sparse/0/\(f)") }
+        // Real cameras, because the import parses them to decide whether the dataset needs
+        // rectifying (`ColmapRectification`). Pinhole → the copy path this test is about.
+        try Data(ColmapFixture.pinholeCamerasText.utf8)
+            .write(to: tmp.appendingPathComponent("cm/sparse/0/cameras.txt"))
         try touch("cm/images/a.jpg"); try touch("cm/images/b.jpg")
         let n = try ImportService.assembleColmap(from: tmp.appendingPathComponent("cm"),
                                                  into: tmp.appendingPathComponent("dst"))

@@ -42,6 +42,40 @@ final class ColmapCameraReaderTests: XCTestCase {
         XCTAssertEqual(v0.name, "frame_000.jpg")
         XCTAssertEqual(v0.qvec.x, 1, accuracy: 1e-9)
     }
+    func testCrlfLineEndingsParse() throws {
+        // 2026-08-15 FIX 2. `trimmingCharacters(in: .whitespaces)` strips space and tab but **not**
+        // `\r`, so a model exported on Windows broke this reader in two different ways:
+        //   cameras.txt — the last parameter arrived as "720\r", which `Double(_:)` rejects, so a
+        //                 PINHOLE row silently lost a parameter and threw "insufficient PINHOLE
+        //                 parameters";
+        //   images.txt  — the empty POINTS2D line arrived as "\r", which is not empty, so the
+        //                 trailing-empty trim stopped early and "\r" was parsed as a pose header
+        //                 (one token where ten are required).
+        // The core's `raw_line` and `ColmapSparse.physicalLines` both handle CRLF; this reader was
+        // the only one in the app that could not open such a model.
+        let dir = FileManager.default.temporaryDirectory
+            .appending(path: "cmcrlf-\(UUID().uuidString)/sparse/0")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let cameras = "# Camera list\r\n1 PINHOLE 1920 1440 1500 1510 960 720\r\n"
+        let images = "# Image list\r\n1 1 0 0 0 0.1 -0.2 3.0 1 frame_000.jpg\r\n\r\n"
+        let points = "# 3D point list\r\n1 0.5 -1.25 3 255 0 17 0.5\r\n"
+        try Data(cameras.utf8).write(to: dir.appending(path: "cameras.txt"))
+        try Data(images.utf8).write(to: dir.appending(path: "images.txt"))
+        try Data(points.utf8).write(to: dir.appending(path: "points3D.txt"))
+
+        let model = try ColmapCameraReader.read(sparseDir: dir)
+        let cam1 = try XCTUnwrap(model.cameras[1])
+        XCTAssertEqual(cam1.fx, 1500, accuracy: 1e-9)
+        XCTAssertEqual(cam1.cy, 720, accuracy: 1e-9)   // the token that used to carry the \r
+        XCTAssertEqual(model.views.count, 1)
+        let v0 = try XCTUnwrap(model.views.first)
+        XCTAssertEqual(v0.name, "frame_000.jpg")       // and not "frame_000.jpg\r"
+        XCTAssertEqual(v0.tvec, SIMD3(0.1, -0.2, 3.0))
+        XCTAssertEqual(try ColmapCameraReader.loadPoints(sparse0: dir),
+                       [SIMD3<Float>(0.5, -1.25, 3)])
+    }
+
     func testTxtPairwiseSkipsPointsLine() throws {
         // A real COLMAP images.txt has two lines per image (a header plus the 2D
         // observations). The observation line has ≥10 tokens with an integer first token, so a

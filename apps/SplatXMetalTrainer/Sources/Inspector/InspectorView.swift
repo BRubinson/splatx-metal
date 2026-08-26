@@ -10,6 +10,35 @@ struct InspectorView: View {
             switch session.tab {
             case .align:
                 VStack(spacing: 0) {
+                    // Auto-level toggle (2026-08-04 spec §1.5). It sits above the CTA because it
+                    // is an input to the run about to start, and it is disabled while align runs
+                    // (the value is read at write time, so a mid-run flip would be a lie).
+                    // The row shape is Theme.swift row rule B③ — a small fixed control,
+                    // trailing-aligned, exactly like CinemaInspector's Loop switch. The 52pt
+                    // FieldLabel cannot hold "Auto-level scene", so the full sentence lives in
+                    // the tooltip rather than in a caption (Theme.swift rules 4/5 reserve
+                    // on-screen captions for "why this is disabled" and derived values).
+                    HStack {
+                        FieldLabel("Auto-level")
+                        Spacer()
+                        Toggle("Auto-level", isOn: Binding(
+                            get: { session.project.autoLevelOnAlign },
+                            // FIX 1/2 (audit review of Task 4): the write-back + save now lives in
+                            // ProjectSession.setAutoLevelOnAlign — this View body only calls it,
+                            // matching the deleteRun precedent (no other View mutates project and
+                            // calls store.save directly).
+                            set: { on in session.setAutoLevelOnAlign(on, model: model) }))
+                            .toggleStyle(.switch)
+                            .controlSize(.mini)
+                            .labelsHidden()
+                            .help("Rotate the scene so the ground is level before writing"
+                                  + " sparse/0 — training, the viewer and every export inherit"
+                                  + " the corrected coordinates.")
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.top, 12)
+                    .disabled(session.alignVM.isRunning)
+                    .opacity(session.alignVM.isRunning ? 0.5 : 1)
                     // Start↔Stop switching (app round 4 spec item 3 — the same pattern as train,
                     // applied at discretion): while running, the CTA in the same place becomes a
                     // red Stop.
@@ -50,6 +79,12 @@ struct InspectorView: View {
                                     KeyValueRow(key: "poses", value: "\(s.poseCount)")
                                     KeyValueRow(key: "points", value: s.pointCount.formatted())
                                     KeyValueRow(key: "time", value: "\(Int(s.alignSeconds))s")
+                                    // 2026-08-04 spec §1.5: shown only when a correction was
+                                    // actually applied — nil (toggle off, or under the 0.5°
+                                    // threshold) hides the row rather than printing "0.0°".
+                                    if let level = Self.levelSummaryValue(s.levelTiltDegrees) {
+                                        KeyValueRow(key: "level", value: level)
+                                    }
                                 }
                             }
                         }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
@@ -121,9 +156,20 @@ struct InspectorView: View {
                         if !session.project.runs.isEmpty {
                             RunsSection(model: model, session: session)
                         }
+                        // session/model are here for the EXPORT section (2026-08-05 spec §1.2 —
+                        // the window toolbar's Export… menu was removed and its single call into
+                        // ExportService.presentPanel now lives inside this view).
+                        // `project.record(matching:)` rather than `viewerVM.currentRun` directly:
+                        // the viewer's copy is a value snapshot frozen at open time, so the
+                        // timelapseFile written when the encode finishes minutes later would never
+                        // reach this view (FIX 1 — the RESULT row fell back from "encoding…" to
+                        // "—" exactly when the file appeared). The snapshot still decides *which*
+                        // run; the manifest supplies its contents.
                         RunPropertiesView(
-                            record: session.viewerVM.currentRun,
-                            loadedSplats: session.viewerVM.currentSplats)
+                            record: session.project.record(matching: session.viewerVM.currentRun),
+                            loadedSplats: session.viewerVM.currentSplats,
+                            session: session,
+                            model: model)
                     }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 }
             case .cinema:
@@ -158,6 +204,15 @@ struct InspectorView: View {
     /// diverge, "a disable with no reason" comes back).
     static func startAlignDisabledReason(imageCount: Int) -> String? {
         imageCount < 2 ? "Needs at least 2 images — import more images first." : nil
+    }
+
+    /// The ALIGNMENT section's auto-level row value — nil hides the row (2026-08-04 spec §1.5:
+    /// "if the toggle was off, or the angle is under 0.5°, do not show it"). AlignView's
+    /// completion summary reuses this same function, so the wording exists in exactly one place.
+    /// Tests: AlignSummaryDisplayTests.
+    static func levelSummaryValue(_ tiltDegrees: Double?) -> String? {
+        guard let d = tiltDegrees else { return nil }
+        return String(format: "%.1f°", d)
     }
 
     /// The Start Training CTA's disabled reason. Priority: align not complete (a pipeline
@@ -245,7 +300,17 @@ private struct RunsSection: View {
             }
             Button("Cancel", role: .cancel) { pendingDelete = nil }
         } message: {
-            Text("The run folder and its output file are deleted permanently.")
+            // Deleting a run removes runs/<id> whole (ProjectSession.deleteRun), which has always
+            // taken the timelapse video with it — but until 2026-08-05 the video had no UI at
+            // all, so "its output file" was a complete description of what the user knew they
+            // were losing. Now that the video is named in RESULT and exported from EXPORT, the
+            // old wording understates the loss, and a video is the one artifact here that cannot
+            // be regenerated by re-running (the frames are gone too). It is named explicitly
+            // rather than hedged as "its files": an unconditional sentence is honest for the
+            // runs that have no timelapse (nothing extra is lost) and load-bearing for the ones
+            // that do.
+            Text("The run folder is deleted permanently, including its output file "
+                 + "and any timelapse video.")
         }
     }
 
@@ -270,10 +335,18 @@ private struct RunsSection: View {
                 }
                 Spacer(minLength: 4)
                 if r.outcome != "completed" {
+                    // Red for a collapse, orange for the rest (2026-08-16). The other two values a
+                    // badge can carry — "cancelled" and "thermalAborted" — are *normal*
+                    // terminations that kept a partial result, so orange (an advisory) is right for
+                    // them. "collapsed" means the run finished and produced nothing usable, which
+                    // is the same severity as the red banner on the Train tab and reads as such at
+                    // a glance in a long RUNS list.
+                    let tint: Color = RunHealth.isCollapsed(recordOutcome: r.outcome)
+                        ? .red : .orange
                     Text(r.outcome)
-                        .font(.caption2).foregroundStyle(.orange)
+                        .font(.caption2).foregroundStyle(tint)
                         .padding(.horizontal, 5).padding(.vertical, 2)
-                        .background(.orange.opacity(0.15), in: Capsule())
+                        .background(tint.opacity(0.15), in: Capsule())
                 }
             }
             .padding(.horizontal, 8).padding(.vertical, 5)

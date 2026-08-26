@@ -7,9 +7,13 @@
 // - The container is **MP4 by default, MOV optional** (footnote 2 ⑤ — widened from the previous
 //   .mov-only. The AVFileType mapping is VideoContainer, and AVAssetWriter records HEVC-in-MP4
 //   with the hvc1 tag — demonstrated by the smoke test). HEVC by default, H.264 optional. The
-//   resolution presets (1080p/1440p/4K) are the output's **short side** in pixels, and the long
-//   side is derived from the aspect ratio (16:9/9:16/1:1) — the real pixel table is authoritative
-//   in VideoExportTests.testResolutionTableAllCombos.
+//   resolution presets are the output's **short side** in pixels, and the long side is derived
+//   from the aspect ratio (16:9/9:16/1:1) — the real pixel table is authoritative in
+//   VideoExportTests.testResolutionTableAllCombos.
+// - The user-facing export axis is **CinemaExportFormat** (MP4/MOV/GIF), which is one level above
+//   VideoContainer: only the two video formats reach AVAssetWriter at all (2026-08-05 spec §5.2,
+//   §5.5). VideoContainer stays a two-case AVFileType mapping — see the CinemaExportFormat
+//   comment for why widening it instead would fail silently.
 // - **All three BT.709 keys are stated explicitly** (AVVideoColorPropertiesKey —
 //   Primaries/Transfer/YCbCrMatrix all ITU_R_709_2). This is the defense against the classic trap
 //   where omitting them makes AVAssetWriter record 601 (Apple forum 5681). The render output is in
@@ -28,6 +32,11 @@
 //   pressure is a safety net.
 // - Cancellation = cancelWriting + **deleting the partial file** (spec, "progress, cancellation,
 //   and partial file cleanup").
+// - The per-frame interface is the **FrameSink** protocol (2026-08-05 spec §5.5, declared below).
+//   It was *extracted from* this class — every signature is unchanged — so that the GIF path
+//   (GifExporter, ImageIO) can reuse RenderJob's frame loop instead of duplicating it. Nothing was
+//   pushed into this class in return: see the FrameSink comment for why the format branch has to
+//   sit one level above the sink.
 //
 // Thread contract: append/finish/cancel are called from exactly one place, the render job's
 // dedicated Thread (RenderJob.run — AVAssetWriter is not Sendable, and the whole session is
@@ -67,11 +76,69 @@ enum VideoContainer: String, CaseIterable, Identifiable {
     var contentType: UTType { self == .mp4 ? .mpeg4Movie : .quickTimeMovie }
 }
 
-/// The resolution presets — the name refers to the output's **short side** in pixels
-/// (1080/1440/2160).
-/// The long side is derived from the aspect ratio: for the 16:9 family, shortSide/9·16 is an
-/// integer for all three values (1920/2560/3840).
+/// The **export format** — the "File" row of the EXPORT section (2026-08-05 spec §5.1: "Format" is
+/// the codec axis, so the format axis is named File in the UI).
+///
+/// Why this is a separate enum instead of `case gif` on VideoContainer (spec §5.2 — this is the
+/// whole reason the type exists, so do not merge them back):
+/// - VideoContainer's three derived properties were written as **ternaries**
+///   (`self == .mp4 ? … : …`). A third case compiles with **zero diagnostics** and silently falls
+///   into the MOV branch, so `VideoExporter.init` would hand `.mov` to AVAssetWriter and produce a
+///   MOV file whose only GIF-ness is the `.gif` extension.
+/// - Second blast radius: `TimelapseFormat.videoContainer == nil` **is** the GIF discriminator
+///   (`TimelapseEncoder.swift` — `guard let container = … else { return try encodeGIF }`). Giving
+///   gif a container collapses that guard and routes the *training* timelapse GIF through
+///   AVAssetWriter too.
+/// Every property below is therefore an **exhaustive switch**: a fourth format cannot be added
+/// without the compiler naming each decision.
+///
+/// Not shared with TimelapseFormat because that one is a `Codable` persisted in project.json with
+/// a lenient-decode contract, while Cinema's export settings are session state that is never
+/// persisted (CinemaViewModel — only outputAspect is persisted).
+enum CinemaExportFormat: String, CaseIterable, Identifiable {
+    case mp4 = "MP4"
+    case mov = "MOV"
+    case gif = "GIF"
+
+    var id: String { rawValue }
+
+    /// The AVAssetWriter container this format encodes through — **nil means GIF**, which goes to
+    /// ImageIO (GifExporter) instead. This mirrors TimelapseFormat.videoContainer so both features
+    /// use one discriminator shape.
+    var videoContainer: VideoContainer? {
+        switch self {
+        case .mp4: .mp4
+        case .mov: .mov
+        case .gif: nil
+        }
+    }
+
+    var fileExtension: String {
+        switch self {
+        case .mp4: "mp4"
+        case .mov: "mov"
+        case .gif: "gif"
+        }
+    }
+
+    /// For synchronizing NSSavePanel.allowedContentTypes with the extension above.
+    var contentType: UTType {
+        switch self {
+        case .mp4: .mpeg4Movie
+        case .mov: .quickTimeMovie
+        case .gif: .gif
+        }
+    }
+}
+
+/// The resolution presets — the name refers to the output's **short side** in pixels.
+/// The long side is derived from the aspect ratio (see VideoExportSettings.pixelSize); which
+/// presets are offered depends on the export format (`choices(for:)`).
 enum ResolutionPreset: String, CaseIterable, Identifiable {
+    case p240 = "240p"
+    case p360 = "360p"
+    case p480 = "480p"
+    case p720 = "720p"
     case p1080 = "1080p"
     case p1440 = "1440p"
     case uhd4K = "4K"
@@ -79,9 +146,46 @@ enum ResolutionPreset: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var shortSide: Int {
         switch self {
+        case .p240: 240
+        case .p360: 360
+        case .p480: 480
+        case .p720: 720
         case .p1080: 1080
         case .p1440: 1440
         case .uhd4K: 2160
+        }
+    }
+
+    /// The presets offered for a given format. **GIF is restricted to ≤720p, and that is a
+    /// deliberate departure from this app's own precedent** (spec §5.4): the training timelapse
+    /// leaves format and resolution independent in the UI and reports the GIF clamp afterwards
+    /// (`gifReductionNote` — "no silent truncation"). That works there because the only clamp is
+    /// `gifMaxLongSide = 960` on an already-written frame directory.
+    /// Cinema cannot report afterwards: an ImageIO GIF destination buffers frames, so 4K × 301
+    /// frames demands several GB **before** any report could be printed — the app dies first.
+    ///
+    /// **This ceiling bounds the cost of one frame, not the total** (FIX 1 — the previous wording,
+    /// "720p × 301 is already ≈1.1GB, which is why the ceiling is there and not higher", invited
+    /// the reading that the cap makes memory safe). The footprint is `w · h · 4 · frames` and
+    /// **frames has no cap at all** — duration and fps are the user's to set, so 2 minutes at
+    /// 60fps is 7201 frames ≈ 26GB even at 720p. What 720p buys is a 9× smaller frame than 4K
+    /// (3.7MB against 33MB), which moves the ordinary export out of danger; it does not make the
+    /// worst case finite.
+    /// The defence for the total is a different one and lives elsewhere: `RenderJob.gifSizeNote`
+    /// prints the real figure for the current selection **before** the render starts, so the
+    /// user is told the number while it is still theirs to change (spec §5.8 — state facts, do
+    /// not silently reduce). Neither mechanism substitutes for the other.
+    ///
+    /// Do not "unify with the timelapse" by deleting this — the resource argument is what differs.
+    static let videoChoices: [ResolutionPreset] = [.p1080, .p1440, .uhd4K]
+    static let gifChoices: [ResolutionPreset] = [.p240, .p360, .p480, .p720]
+
+    /// Exhaustive switch rather than `format == .gif ? … : …` for the same reason
+    /// CinemaExportFormat's properties are: a new format must not silently inherit a list.
+    static func choices(for format: CinemaExportFormat) -> [ResolutionPreset] {
+        switch format {
+        case .mp4, .mov: videoChoices
+        case .gif: gifChoices
         }
     }
 }
@@ -89,16 +193,45 @@ enum ResolutionPreset: String, CaseIterable, Identifiable {
 /// The encoder settings builder (a set of pure functions). Only VideoExporter touches
 /// AVAssetWriter.
 enum VideoExportSettings {
-    /// The fps choices (spec: 24/30/60). CinemaViewModel.setFPS uses them for validation.
-    static let fpsChoices = [24, 30, 60]
+    /// The fps choices. CinemaViewModel.setFPS uses them for validation.
+    ///
+    /// 15 was added on user request (2026-08-05 spec §3, "export rate에 15 옵션도 추가해야겠어.
+    /// gif 때문에") — a GIF at 15fps is roughly half the frames of 30 for the same motion, which is
+    /// the lever that actually moves a GIF's size, and `gifSizeNote`'s figure is linear in it.
+    /// Every consumer was checked against the new low end rather than assumed safe (spec §3.1):
+    /// `FrameSchedule.frameCount` rounds, so 15 stays integral; `CMTime` timescale 15 is exact in
+    /// Int32 and keeps PTS rational; the GOP key (`AVVideoMaxKeyFrameIntervalKey: fps`) is still
+    /// exactly one second; and `bitrate`'s 2Mbps floor is not reached — the smallest combination
+    /// (1:1 1080p at 15fps, HEVC) is 2.62Mbps, so no selection silently lands on the clamp. Below
+    /// about 12fps that floor would start to bind, which is where this list should stop growing
+    /// downward without redoing that arithmetic.
+    ///
+    /// GIF-side quantisation is **not** a reason to exclude it: 1/15 = 6.67cs does not land on
+    /// GIF's 1/100s grid, but neither does any other choice here (24 → 4.17, 30 → 3.33,
+    /// 60 → 1.67 — only 10/20/25/50 are exact). ImageIO's measured rounding for each is pinned by
+    /// GifExporterTests.testGifDelayQuantisationForEveryRateChoice, and `RenderJob.gifFpsNote`
+    /// classifies 15 as safe by arithmetic (0.0667 ≫ 0.02) without needing a case for it.
+    static let fpsChoices = [15, 24, 30, 60]
 
     /// Preset × aspect ratio → real pixels. The short side = the preset, and the long side is
     /// derived from the aspect ratio (all even — an encoder dimension requirement). The table is
     /// authoritative in the test (testResolutionTableAllCombos).
+    ///
+    /// The long side used to be `short / 9 * 16`, with the comment "1080→1920, 1440→2560,
+    /// 2160→3840 (all integers)". **That premise broke** when the GIF presets were added (spec
+    /// §5.3): integer division is only exact when the short side is a multiple of 9, and 240 and
+    /// 480 are not — 240/9·16 = 416 against a true 426.67 (−2.5%), 480/9·16 = 848 against 853.33
+    /// (−0.6%). Rounding the real ratio corrects those two to 428 and 854 and leaves every
+    /// previously shipped value untouched (360→640, 720→1280, 1080→1920, 1440→2560, 2160→3840),
+    /// which testResolutionTableAllCombos pins.
+    ///
+    /// evenUp is an encoder requirement that GIF does not have, but it is applied to **one shared
+    /// formula** on purpose: if the pixel size depended on the format, "the same 480 gives
+    /// different frames in MP4 and GIF" — and the WYSIWYG preview has only one size to show.
     static func pixelSize(preset: ResolutionPreset, aspect: OutputAspect)
         -> (width: Int, height: Int) {
-        let short = preset.shortSide
-        let long = short / 9 * 16   // 1080→1920, 1440→2560, 2160→3840 (all integers)
+        let short = preset.shortSide   // every preset is even, so only the long side needs evenUp
+        let long = TimelapseSettings.evenUp(Int((Double(short) * 16.0 / 9.0).rounded()))
         switch aspect {
         case .wide: return (long, short)
         case .tall: return (short, long)
@@ -230,6 +363,43 @@ struct OverlayCompositor {
         ctx.restoreGState()
     }
 }
+
+// MARK: - Frame sink (what RenderJob's per-frame loop is written against)
+
+/// The minimum an encoder has to offer the render loop: take one frame, then either finish or
+/// cancel. Two conformers — `VideoExporter` (AVAssetWriter → MP4/MOV) and `GifExporter`
+/// (ImageIO → GIF).
+///
+/// **Why the format branch is above the sink and not inside VideoExporter** (2026-08-05 spec §5.5,
+/// and the reason this protocol exists at all): everything this file owns below the writer — the
+/// pixel buffer pool, the BT.709 tagging, FrameQueue, the requestMediaDataWhenReady pull loop — is
+/// AVAssetWriter-specific. An internal `if gif` would leave most of the class dead on the GIF path
+/// while still constructing it. Timelapse already settled on the same shape one level up
+/// (`TimelapseEncoder.encode` dispatches on `format.videoContainer == nil` and simply never builds
+/// a VideoExporter for GIF).
+///
+/// Contracts every conformer inherits — both are load-bearing, and neither is expressible in the
+/// signatures:
+/// - **One thread.** append/finish/cancel come from exactly one thread (RenderJob's dedicated
+///   Thread). The reason is *not* the encoder — it is `sx_render_session_frame`, a blocking GPU
+///   round trip that must not occupy a Swift concurrency executor.
+/// - **cancel() deletes the partial file.** A failure notification and a broken output file must
+///   never coexist (RenderJob FIX 2 / I1). The caller invokes cancel() on the render-failure,
+///   encode-failure, user-cancellation, and finalize-failure paths, so cancel() must be safe to
+///   call twice and in a terminal state.
+protocol FrameSink: AnyObject {
+    /// One frame. `rgba` is width·height·4 bytes, densely packed, memory row 0 = the topmost
+    /// scanline. **The caller repaints that same buffer for the next frame**, so a sink must copy
+    /// what it needs and must not retain the pointer (the trap GifExporter documents at length).
+    /// `compositor`, when present, is the watermark and must actually be drawn.
+    func append(rgba: UnsafePointer<UInt8>, frameIndex: Int,
+                compositor: OverlayCompositor?) throws
+    func finish() throws
+    func cancel()
+}
+
+/// Conformance only — the three members already existed with these exact signatures.
+extension VideoExporter: FrameSink {}
 
 // MARK: - Frame queue (the producing render thread ↔ the consuming writer queue — the
 // implementation of back pressure)
