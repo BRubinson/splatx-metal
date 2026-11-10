@@ -17,7 +17,7 @@ let package = Package(
         .executable(name: "splatx", targets: ["splatx-cli"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
+        .package(path: "../swift-argument-parser"),
     ],
     targets: [
         // Niantic spz — SPZ format C++ library (vendored v2.1.0, MIT).
