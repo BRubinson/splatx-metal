@@ -285,6 +285,7 @@ extern "C" int32_t sx_train_run_args(const SxTrainArgs* args, char* err_buf,
         // validation throw).
         const int32_t snapshot_every = args->snapshot_every;
         const bool snapshot_on = args->snapshot_cb && snapshot_every > 0;
+        const float depth_weight = args->depth_weight;
 
         if (!data_dir || !out_ply) throw std::invalid_argument("data_dir/out_ply must be given");
         if (thermal_mode < 0 || thermal_mode > 2)
@@ -314,6 +315,8 @@ extern "C" int32_t sx_train_run_args(const SxTrainArgs* args, char* err_buf,
             throw std::invalid_argument("--eval-every requires --test-split > 0 (no test views)");
         if (!(ssim_weight >= 0.0f && ssim_weight <= 1.0f)) // rejects NaN (negated form — same as the Trainer guard)
             throw std::invalid_argument("ssim_weight must be in [0,1]");
+        if (!(depth_weight >= 0.0f && std::isfinite(depth_weight)))
+            throw std::invalid_argument("depth_weight must be finite and >= 0");
         if (log_every < 1) log_every = 10;
 
         // Extended resume: for the ratio-based schedule denominator (total_iters) the checkpoint is
@@ -452,6 +455,7 @@ extern "C" int32_t sx_train_run_args(const SxTrainArgs* args, char* err_buf,
         cfg.antialiased = antialiased != 0;
         // device-resident train_step (Phase 3 Task 5 — default on, with the --no-resident escape hatch)
         cfg.resident = resident != 0;
+        cfg.depth_weight = depth_weight;
 
         splatx::InitOptions io;
         io.max_points = max_points;
@@ -628,6 +632,31 @@ extern "C" int32_t sx_train_run_args(const SxTrainArgs* args, char* err_buf,
             return slot;
         };
 
+        // Depth sidecars (DepthSupervision.h): decoded once per view on first use and kept (the
+        // ARKit maps are 256×192 floats). They supervise train views when depth_weight > 0 and give
+        // the held-out depth RMSE whenever test views have them.
+        std::size_t n_depth_views = 0;
+        for (const auto& cam : ti.cameras) n_depth_views += cam.depth_path.empty() ? 0 : 1;
+        if (n_depth_views > 0 || depth_weight > 0.0f) {
+            std::printf("depth sidecars: %zu/%zu views, depth_weight %.3f\n", n_depth_views,
+                        ti.cameras.size(), static_cast<double>(depth_weight));
+            std::fflush(stdout);
+        }
+        std::vector<splatx::DepthTarget> depth_cache(ti.cameras.size());
+        std::vector<char> depth_loaded(ti.cameras.size(), 0);
+        const auto load_depth = [&](std::size_t cam_idx) -> const splatx::DepthTarget* {
+            const splatx::TrainingCamera& cam = ti.cameras[cam_idx];
+            if (cam.depth_path.empty()) return nullptr;
+            if (!depth_loaded[cam_idx]) {
+                splatx::DepthTarget t =
+                    splatx::load_depth_sidecar(cam.depth_path, cam.confidence_path);
+                t.view_valid = splatx::depth_valid_count(t, cam.width, cam.height);
+                depth_cache[cam_idx] = std::move(t);
+                depth_loaded[cam_idx] = 1;
+            }
+            return &depth_cache[cam_idx];
+        };
+
         // eval: renders every test view at full sh_degree → clamps to [0,1] → takes the arithmetic
         // mean of the per-view PSNRs (gsplat simple_trainer.py:1240 clamp + :1254/:1271 per-view
         // psnr then mean — not a pooled MSE).
@@ -651,14 +680,24 @@ extern "C" int32_t sx_train_run_args(const SxTrainArgs* args, char* err_buf,
         // are excluded from the SSIM mean (the guard precedes the backend validator throw); with
         // zero valid views the mean is NaN as well.
         const auto run_eval = [&](int iter_done, double& cc_mean_out, double& ssim_mean_out,
-                                  double& cc_ssim_mean_out) -> double {
+                                  double& cc_ssim_mean_out, double& depth_rmse_out) -> double {
             double sum = 0.0, cc_sum = 0.0, ssim_sum = 0.0, cc_ssim_sum = 0.0;
+            splatx::DepthErrorSum depth_err;
             size_t ssim_views = 0; // count excluding views with h/w < 11 (the NaN convention)
             std::vector<float> cc; // buffer reused across views (out must be a separate buffer — not in-place)
             for (int64_t t : split.test) {
                 const splatx::TrainingCamera& cam = ti.cameras[static_cast<size_t>(t)];
                 const splatx::ImageF32& gt = load_gt(static_cast<size_t>(t));
-                std::vector<float> render = trainer.render(cam);
+                const splatx::DepthTarget* dt = load_depth(static_cast<size_t>(t));
+                std::vector<float> render;
+                if (dt) {
+                    splatx::DepthRender dr = trainer.render_with_depth(cam);
+                    splatx::accumulate_depth_error(dr.depth.data(), *dt, cam.width, cam.height,
+                                                   depth_err);
+                    render = std::move(dr.rgb);
+                } else {
+                    render = trainer.render(cam);
+                }
                 for (float& v : render) v = std::clamp(v, 0.0f, 1.0f);
                 const int64_t n = static_cast<int64_t>(render.size());
                 sum += splatx::psnr(render.data(), gt.rgb.data(), n);
@@ -684,11 +723,18 @@ extern "C" int32_t sx_train_run_args(const SxTrainArgs* args, char* err_buf,
             const double ssim_mean = ssim_views ? ssim_sum / static_cast<double>(ssim_views) : nan;
             const double cc_ssim_mean =
                 ssim_views ? cc_ssim_sum / static_cast<double>(ssim_views) : nan;
+            const double depth_rmse =
+                depth_err.n > 0 ? std::sqrt(depth_err.sq / static_cast<double>(depth_err.n)) : nan;
             std::printf("eval  iter %5d/%d  PSNR %.3f dB | cc %.3f dB | SSIM %.4f | ccSSIM %.4f "
                         "(%zu test views)\n",
                         iter_done, run_until, mean, cc_mean, ssim_mean, cc_ssim_mean,
                         split.test.size());
+            if (depth_err.n > 0)
+                std::printf("eval  iter %5d/%d  depth RMSE %.4f m (%lld sidecar samples)\n",
+                            iter_done, run_until, depth_rmse,
+                            static_cast<long long>(depth_err.n));
             std::fflush(stdout);
+            depth_rmse_out = depth_rmse;
             cc_mean_out = cc_mean;
             ssim_mean_out = ssim_mean;
             cc_ssim_mean_out = cc_ssim_mean;
@@ -767,6 +813,7 @@ extern "C" int32_t sx_train_run_args(const SxTrainArgs* args, char* err_buf,
         // would be indistinguishable from "a measured 0").
         double last_eval_ssim = std::numeric_limits<double>::quiet_NaN();
         double last_eval_cc_ssim = std::numeric_limits<double>::quiet_NaN();
+        double last_eval_depth_rmse = std::numeric_limits<double>::quiet_NaN();
         bool aborted_thermal = false;
         bool stopped_external = false;
         ctl.loop_active.store(true, std::memory_order_release);
@@ -792,9 +839,11 @@ extern "C" int32_t sx_train_run_args(const SxTrainArgs* args, char* err_buf,
             const int64_t cam_idx = split.train[static_cast<size_t>(it) % split.train.size()];
             const splatx::TrainingCamera& cam = ti.cameras[static_cast<size_t>(cam_idx)];
             const splatx::ImageF32& gt = load_gt(static_cast<size_t>(cam_idx));
+            const splatx::DepthTarget* depth =
+                depth_weight > 0.0f ? load_depth(static_cast<size_t>(cam_idx)) : nullptr;
 
             const auto t_it = Clock::now();
-            const splatx::TrainStepResult r = trainer.step(cam, gt.rgb.data(), it);
+            const splatx::TrainStepResult r = trainer.step(cam, gt.rgb.data(), it, depth);
             const double step_ms = ms_since(t_it);
 
             if (it == start_iter) first_loss = r.loss;
@@ -820,8 +869,8 @@ extern "C" int32_t sx_train_run_args(const SxTrainArgs* args, char* err_buf,
             }
             bool eval_this_tick = false;
             if (eval_every > 0 && (it + 1) % eval_every == 0) {
-                last_eval_psnr =
-                    run_eval(it + 1, last_eval_cc, last_eval_ssim, last_eval_cc_ssim);
+                last_eval_psnr = run_eval(it + 1, last_eval_cc, last_eval_ssim,
+                                          last_eval_cc_ssim, last_eval_depth_rmse);
                 last_eval_iter = it + 1;
                 eval_this_tick = true;
             }
@@ -901,6 +950,7 @@ extern "C" int32_t sx_train_run_args(const SxTrainArgs* args, char* err_buf,
                 p.n_isects = r.n_isects;
                 p.splat_count = trainer.splat_count();
                 p.thermal_state = static_cast<int32_t>(governor.thermal_state());
+                p.depth_rmse = eval_this_tick ? static_cast<float>(last_eval_depth_rmse) : NAN;
                 args->progress(&p, args->progress_user);
             }
         }
@@ -948,14 +998,17 @@ extern "C" int32_t sx_train_run_args(const SxTrainArgs* args, char* err_buf,
         double final_cc = std::numeric_limits<double>::quiet_NaN();
         double final_ssim = std::numeric_limits<double>::quiet_NaN();
         double final_cc_ssim = std::numeric_limits<double>::quiet_NaN();
+        double final_depth_rmse = std::numeric_limits<double>::quiet_NaN();
         if (test_split > 0 && !aborted_thermal && !stopped_external) {
             if (last_eval_iter == completed) {
                 final_psnr = last_eval_psnr;
                 final_cc = last_eval_cc;
                 final_ssim = last_eval_ssim;
                 final_cc_ssim = last_eval_cc_ssim;
+                final_depth_rmse = last_eval_depth_rmse;
             } else {
-                final_psnr = run_eval(completed, final_cc, final_ssim, final_cc_ssim);
+                final_psnr = run_eval(completed, final_cc, final_ssim, final_cc_ssim,
+                                      final_depth_rmse);
             }
             std::printf(
                 "final eval PSNR: %.3f dB | cc %.3f dB | SSIM %.4f | ccSSIM %.4f (%zu test views)\n",
@@ -1046,6 +1099,7 @@ extern "C" int32_t sx_train_run_args(const SxTrainArgs* args, char* err_buf,
             st.final_cc_psnr = static_cast<float>(final_cc);     // NaN if not performed (same convention)
             st.final_ssim = static_cast<float>(final_ssim);      // NaN if not performed / zero valid views
             st.final_cc_ssim = static_cast<float>(final_cc_ssim); // same convention (perceptual-metrics Task 2)
+            st.final_depth_rmse = static_cast<float>(final_depth_rmse); // NaN without sidecars/eval
             st.train_seconds = train_s;
             st.checkpoint_saved = save_checkpoint_path ? 1 : 0;
             *args->stats = st;

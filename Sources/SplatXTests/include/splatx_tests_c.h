@@ -39,6 +39,12 @@ int32_t sx_tests_run_all(const char* fixture_dir, const char* kernel_src_dir,
                          const char* metallib_path, sx_tests_report_cb cb, void* user,
                          int32_t* out_total, int32_t* out_failed);
 
+// Runs only the registered tests whose name starts with prefix (the build-time fixture and kernel
+// paths) — the Swift test target's entry into the C++ suite. Same return convention as
+// sx_tests_run_all; out_total counts the tests that ran.
+int32_t sx_tests_run_prefix(const char* prefix, sx_tests_report_cb cb, void* user,
+                            int32_t* out_total, int32_t* out_failed);
+
 // The host-only (non-iOS) test list — the names of tests whose translation unit is disabled by a
 // build condition (MetallibTests.cpp: it runs std::system and the build script, so it can neither
 // compile nor run on iOS).

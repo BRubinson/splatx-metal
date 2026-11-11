@@ -643,8 +643,9 @@ ShInputs make_sh_inputs_impl(const std::vector<float>& dirs, const std::vector<f
 }
 
 RasterizeFwdInputs make_raster_inputs(const Trainer::Forward& f, const TrainingCamera& cam,
-                                      int64_t N) {
+                                      int64_t N, bool with_depth = false) {
     RasterizeFwdInputs r;
+    if (with_depth) r.depths = f.proj.depths.data(); // the projection's camera z, per Gaussian
     r.means2d = f.proj.means2d.data();
     r.conics = f.proj.conics.data();
     r.colors = f.colors.data();
@@ -673,6 +674,8 @@ Trainer::Trainer(KernelBackend& backend, SplatCloud cloud, const TrainConfig& cf
     // compatibility with pure L1.
     if (!(cfg_.ssim_weight >= 0.0f && cfg_.ssim_weight <= 1.0f))
         throw std::invalid_argument("Trainer: ssim_weight must be in [0,1]");
+    if (!(cfg_.depth_weight >= 0.0f && std::isfinite(cfg_.depth_weight)))
+        throw std::invalid_argument("Trainer: depth_weight must be finite and >= 0");
     arena_rows_ = cloud_.count; // mcmc off — the same fixed N as 1c
     if (!cfg_.mcmc.enabled) return;
 
@@ -713,7 +716,8 @@ Trainer::Trainer(KernelBackend& backend, SplatCloud cloud, const TrainConfig& cf
     mcmc_rng_.seed(m.seed);
 }
 
-Trainer::Forward Trainer::forward_pass(const TrainingCamera& cam, uint32_t degrees_to_use) {
+Trainer::Forward Trainer::forward_pass(const TrainingCamera& cam, uint32_t degrees_to_use,
+                                       bool with_depth) {
     const int64_t N = cloud_.count;
     if (cam.width < 1 || cam.height < 1)
         throw std::invalid_argument("Trainer: camera width/height must be positive");
@@ -827,7 +831,7 @@ Trainer::Forward Trainer::forward_pass(const TrainingCamera& cam, uint32_t degre
     }
 
     // [05] rasterize fwd
-    f.raster = backend_.rasterize_fwd(make_raster_inputs(f, cam, N));
+    f.raster = backend_.rasterize_fwd(make_raster_inputs(f, cam, N, with_depth));
     return f;
 }
 
@@ -913,7 +917,8 @@ void Trainer::sync_host_for_mutation() {
     device_authoritative_ = false; // host mutation follows — the next resident step re-uploads
 }
 
-TrainStepResult Trainer::step_resident(const TrainingCamera& cam, const float* gt_rgb, int iter) {
+TrainStepResult Trainer::step_resident(const TrainingCamera& cam, const float* gt_rgb, int iter,
+                                       const DepthTarget* depth) {
     if (cam.width < 1 || cam.height < 1)
         throw std::invalid_argument("Trainer: camera width/height must be positive");
     if (!device_authoritative_) resident_upload();
@@ -941,6 +946,14 @@ TrainStepResult Trainer::step_resident(const TrainingCamera& cam, const float* g
                          ? cfg_.scale_reg / static_cast<float>(cloud_.count * 3)
                          : 0.0f;
     in.want_render = true; // upholds the TrainStepResult.render_colors contract (the input for --save-preview)
+    if (depth) {
+        in.gt_depth = depth->depth_m.data();
+        in.depth_width = depth->width;
+        in.depth_height = depth->height;
+        in.depth_valid = depth->view_valid >= 0 ? depth->view_valid
+                                                : depth_valid_count(*depth, cam.width, cam.height);
+        in.depth_weight = cfg_.depth_weight;
+    }
     const bool refine_due = cfg_.mcmc.enabled && mcmc_refine_due(iter);
     if (cfg_.mcmc.enabled && !refine_due) {
         in.inject_noise = true;
@@ -956,6 +969,7 @@ TrainStepResult Trainer::step_resident(const TrainingCamera& cam, const float* g
     r.loss = ro.loss;
     r.n_isects = ro.n_isects;
     r.render_colors = std::move(ro.render_colors);
+    r.depth_loss = ro.depth_loss;
     if (refine_due) {
         // Refine step: reuses the host orchestration — mcmc_refine()/mcmc_inject_noise() reclaim the
         // parameters and moments through sync_host_for_mutation() and move Home to the host.
@@ -968,12 +982,20 @@ TrainStepResult Trainer::step_resident(const TrainingCamera& cam, const float* g
     return r;
 }
 
-TrainStepResult Trainer::step(const TrainingCamera& cam, const float* gt_rgb, int iter) {
+TrainStepResult Trainer::step(const TrainingCamera& cam, const float* gt_rgb, int iter,
+                              const DepthTarget* depth) {
     if (!gt_rgb) throw std::invalid_argument("Trainer::step: null gt_rgb");
-    if (resident_ready()) return step_resident(cam, gt_rgb, iter);
+    if (depth && depth->empty()) depth = nullptr;
+    if (cfg_.depth_weight <= 0.0f) depth = nullptr; // off — the RGB-only step, unchanged
+    if (resident_ready()) return step_resident(cam, gt_rgb, iter, depth);
     const int64_t N = cloud_.count;
+    const int64_t depth_valid =
+        depth ? (depth->view_valid >= 0 ? depth->view_valid
+                                        : depth_valid_count(*depth, cam.width, cam.height))
+              : 0;
+    const bool use_depth = depth && depth_valid > 0;
 
-    Forward f = forward_pass(cam, sh_degree_at(cfg_, iter, cloud_.sh_degree));
+    Forward f = forward_pass(cam, sh_degree_at(cfg_, iter, cloud_.sh_degree), use_depth);
 
     const float* loss_img = f.raster.render_colors.data();
 
@@ -1015,7 +1037,15 @@ TrainStepResult Trainer::step(const TrainingCamera& cam, const float* gt_rgb, in
             l1.v_render_colors[i] = w_l1 * l1.v_render_colors[i] + v_dssim[i];
         loss = w_l1 * l1.loss + lam * (1.0f - static_cast<float>(so.ssim));
     }
-    const std::vector<float> v_render_alphas(static_cast<size_t>(hw), 0.0f);
+    std::vector<float> v_render_alphas(static_cast<size_t>(hw), 0.0f);
+    // Depth supervision: the inverse-depth L1 over the expected depth enters through the Σwz
+    // channel and, by the α normalisation, through v_render_alphas.
+    DepthLossResult dl;
+    if (use_depth) {
+        dl = depth_loss_and_grad(f.raster.render_depths.data(), f.raster.render_alphas.data(),
+                                 *depth, cam.width, cam.height, depth_valid, cfg_.depth_weight);
+        v_render_alphas = dl.v_render_alphas;
+    }
 
     // [05] rasterize bwd — reuses the same buffers as fwd (activations, flatten_ids, offsets) (the D7
     // contract). v_render_colors is the total gradient combined above (at λ=0 it is pure v_L1).
@@ -1024,7 +1054,8 @@ TrainStepResult Trainer::step(const TrainingCamera& cam, const float* gt_rgb, in
     gin.last_ids = f.raster.last_ids.data();
     gin.v_render_colors = l1.v_render_colors.data();
     gin.v_render_alphas = v_render_alphas.data();
-    RasterizeBwdGrads rg = backend_.rasterize_bwd(make_raster_inputs(f, cam, N), gin);
+    if (use_depth) gin.v_render_depths = dl.v_render_depths.data();
+    RasterizeBwdGrads rg = backend_.rasterize_bwd(make_raster_inputs(f, cam, N, use_depth), gin);
 
     // [02] SH bwd — applies relu_mask: channels where the clamp fired (pre_clamp <= 0) have their
     // gradient blocked (torch clamp subgradient 0). Because the block happens at the **input stage**
@@ -1037,9 +1068,10 @@ TrainStepResult Trainer::step(const TrainingCamera& cam, const float* gt_rgb, in
     sin.compute_v_dirs = true;
     const ShGrads sg = backend_.sh_bwd(sin, rg.v_colors.data());
 
-    // [01] projection bwd (v_depths is a zero buffer — depth rendering is unused, D6). It MUST be
-    // called with the same viewmat as fwd (cam.viewmat) for the gradients to be consistent.
-    const std::vector<float> v_depths(static_cast<size_t>(N), 0.0f);
+    // [01] projection bwd (v_depths is a zero buffer unless the step is depth-supervised). It MUST
+    // be called with the same viewmat as fwd (cam.viewmat) for the gradients to be consistent.
+    const std::vector<float> v_depths =
+        use_depth ? rg.v_depths : std::vector<float>(static_cast<size_t>(N), 0.0f);
     const ProjectionFusedInputs pin =
         make_proj_inputs(cloud_, cam, cfg_, f.scales_lin, f.opacs_act, cam.viewmat);
     ProjectionFusedGradsIn pgin;
@@ -1127,7 +1159,37 @@ TrainStepResult Trainer::step(const TrainingCamera& cam, const float* gt_rgb, in
     r.loss = loss; // the combined loss (see the TrainStepResult comment — at λ=0 it is l1.loss unchanged)
     r.n_isects = f.isect.n_isects;
     r.render_colors = std::move(f.raster.render_colors);
+    r.depth_loss = dl.loss;
     return r;
+}
+
+DepthRender Trainer::render_with_depth(const TrainingCamera& cam) {
+    DepthRender out;
+    if (resident_ready()) {
+        if (cam.width < 1 || cam.height < 1)
+            throw std::invalid_argument("Trainer: camera width/height must be positive");
+        if (!device_authoritative_) resident_upload();
+        ResidentStepInputs in;
+        in.viewmat = cam.viewmat;
+        in.K = cam.K;
+        in.width = cam.width;
+        in.height = cam.height;
+        in.count = cloud_.count;
+        in.degrees_to_use = static_cast<uint32_t>(cloud_.sh_degree);
+        in.forward_only = true;
+        in.want_render = true;
+        in.want_depth = true;
+        ResidentStepOutputs ro = exec_->step(in);
+        out.rgb = std::move(ro.render_colors);
+        out.depth = std::move(ro.render_depths);
+        return out;
+    }
+    Forward f = forward_pass(cam, static_cast<uint32_t>(cloud_.sh_degree), true);
+    out.depth.resize(f.raster.render_alphas.size());
+    for (size_t i = 0; i < out.depth.size(); i++)
+        out.depth[i] = expected_depth(f.raster.render_depths[i], f.raster.render_alphas[i]);
+    out.rgb = std::move(f.raster.render_colors);
+    return out;
 }
 
 std::vector<float> Trainer::render(const TrainingCamera& cam) {

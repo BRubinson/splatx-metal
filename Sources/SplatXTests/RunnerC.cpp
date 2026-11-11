@@ -31,6 +31,22 @@ extern "C" int32_t sx_tests_run_all(const char* fixture_dir, const char* kernel_
     return static_cast<int32_t>(rc);
 }
 
+extern "C" int32_t sx_tests_run_prefix(const char* prefix, sx_tests_report_cb cb, void* user,
+                                       int32_t* out_total, int32_t* out_failed) {
+    sxtest::set_test_paths(nullptr, nullptr);
+    int32_t failed_tests = 0, total = 0;
+    const int rc = sxtest::run_all(
+        [&](const char* name, bool passed, int failed_checks) {
+            total++;
+            if (!passed) failed_tests++;
+            if (cb) cb(name, passed ? 1 : 0, static_cast<int32_t>(failed_checks), user);
+        },
+        prefix);
+    if (out_total) *out_total = total;
+    if (out_failed) *out_failed = failed_tests;
+    return static_cast<int32_t>(rc);
+}
+
 extern "C" int32_t sx_tests_host_only_excluded_count(void) {
     return static_cast<int32_t>(sxtest::host_only_excluded().size());
 }

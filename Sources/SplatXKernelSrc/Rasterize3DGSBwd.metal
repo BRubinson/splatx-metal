@@ -89,6 +89,10 @@ kernel void rasterize_to_pixels_3dgs_bwd(
     device atomic_float*        v_opacities     [[buffer(15)]], // [I,N]
     device atomic_float*        v_means2d_abs   [[buffer(16), function_constant(kRastHasAbsGrad)]], // [I,N,2]
     constant RasterizeParams&   P               [[buffer(17)]],
+    // Expected-depth channel: routed exactly like a fourth colour channel (no background term).
+    device const float*         depths          [[buffer(18), function_constant(kRastHasDepth)]], // [I,N]
+    device const float*         v_render_depths [[buffer(19), function_constant(kRastHasDepth)]], // [I,H,W]
+    device atomic_float*        v_depths        [[buffer(20), function_constant(kRastHasDepth)]], // [I,N]
     uint2 tg_pos    [[threadgroup_position_in_grid]],           // .x = linear_block_index
                                                                 // (a 2D threadgroup, so the position
                                                                 //  attribute ranks match — MSL rule)
@@ -119,6 +123,7 @@ kernel void rasterize_to_pixels_3dgs_bwd(
     v_render_alphas += image_id * P.image_height * P.image_width;
     if (kRastHasBackground) backgrounds += image_id * CDIM;
     if (kRastHasMasks)      masks       += image_id * tiles_per_image;
+    if (kRastHasDepth)      v_render_depths += image_id * P.image_height * P.image_width;
 
     // Masked-out tile: return without writing anything (Bwd.cu:106-109 — this assumes the gradient
     // buffers were zero-initialized beforehand). The condition is threadgroup-uniform and this sits
@@ -156,6 +161,8 @@ kernel void rasterize_to_pixels_3dgs_bwd(
     float v_render_c[CDIM];
     for (uint k = 0; k < CDIM; ++k) v_render_c[k] = v_render_colors[pix_id * CDIM + k];
     const float v_render_a = v_render_alphas[pix_id];
+    const float v_render_d = kRastHasDepth ? v_render_depths[pix_id] : 0.f;
+    float buffer_depth     = 0.f; // S_i for the depth channel
 
     // warp pre-reduction (Bwd.cu:153-155): cg::reduce(warp, bin_final, greater) → simd_max
     const int warp_bin_final = simd_max(bin_final);
@@ -213,6 +220,7 @@ kernel void rasterize_to_pixels_3dgs_bwd(
             float2 v_xy_local        = float2(0.f);
             float2 v_xy_abs_local    = float2(0.f);
             float  v_opacity_local   = 0.f;
+            float  v_depth_local     = 0.f;
             if (valid) {
                 // T recomputation (Bwd.cu:229-232): ra = 1/(1-α), bounded below by kMinOneMinusAlpha=1e-6
                 const float ra  = 1.0f / max(kMinOneMinusAlpha, 1.0f - alpha);
@@ -229,6 +237,12 @@ kernel void rasterize_to_pixels_3dgs_bwd(
                     v_alpha += (rgbs_batch[t * CDIM + k] * T - buffer_acc[k] * ra) *
                                v_render_c[k];
                 v_alpha += T_final * ra * v_render_a;
+                float depth_g = 0.f;
+                if (kRastHasDepth) {
+                    depth_g       = depths[id_batch[t]];
+                    v_depth_local = fac * v_render_d;
+                    v_alpha      += (depth_g * T - buffer_depth * ra) * v_render_d;
+                }
                 if (kRastHasBackground) {
                     float accum = 0.f;
                     for (uint k = 0; k < CDIM; ++k) accum += backgrounds[k] * v_render_c[k];
@@ -253,6 +267,7 @@ kernel void rasterize_to_pixels_3dgs_bwd(
                 // Update the accumulated behind-contribution S_i[k] += c_i[k]·α_i·T_i (Bwd.cu:276-280)
                 for (uint k = 0; k < CDIM; ++k)
                     buffer_acc[k] += rgbs_batch[t * CDIM + k] * fac;
+                if (kRastHasDepth) buffer_depth += depth_g * fac;
             }
 
             // simdgroup reduction (warpSum, Bwd.cu:282-289 / Utils.cuh:153-191) — a per-component
@@ -265,6 +280,7 @@ kernel void rasterize_to_pixels_3dgs_bwd(
             if (kRastHasAbsGrad)
                 v_xy_abs_local = float2(simd_sum(v_xy_abs_local.x), simd_sum(v_xy_abs_local.y));
             v_opacity_local = simd_sum(v_opacity_local);
+            if (kRastHasDepth) v_depth_local = simd_sum(v_depth_local);
 
             // Only lane 0 does the atomic scatter (Bwd.cu:290-317) — CDIM+6 (+2 with absgrad) per
             // simdgroup; one tile = 8 independent simdgroups (supplement 3). relaxed device scope
@@ -292,6 +308,8 @@ kernel void rasterize_to_pixels_3dgs_bwd(
                 }
                 atomic_fetch_add_explicit(v_opacities + g, v_opacity_local,
                                           memory_order_relaxed);
+                if (kRastHasDepth)
+                    atomic_fetch_add_explicit(v_depths + g, v_depth_local, memory_order_relaxed);
             }
         }
     }

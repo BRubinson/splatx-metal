@@ -185,6 +185,9 @@ struct RasterizeFwdInputs {
     int64_t I = 0, N = 0, n_isects = 0;
     uint32_t image_width = 0, image_height = 0;
     uint32_t tile_size = 16, tile_width = 0, tile_height = 0;
+    // Optional expected-depth channel (kRastHasDepth): per-Gaussian camera z (projection depths),
+    // composited like a colour. nullptr renders RGB only, through the unchanged kernel variant.
+    const float*   depths        = nullptr; // [I,N]
 };
 
 // The three outputs (the final writes at Fwd.cu:274-296). last_ids is not a gaussian id but the
@@ -196,6 +199,9 @@ struct RasterizeFwdOutputs {
     std::vector<float>   render_colors; // [I,H,W,3]
     std::vector<float>   render_alphas; // [I,H,W,1] = 1 - T_final
     std::vector<int32_t> last_ids;      // [I,H,W]
+    // Σ w·z per pixel, only when RasterizeFwdInputs.depths is set (else empty). The expected
+    // depth is render_depths / render_alphas (gsplat RGB+ED normalises outside the kernel).
+    std::vector<float>   render_depths; // [I,H,W]
 };
 
 // Spec 05 rasterize_to_pixels_3dgs_bwd additional inputs (Bwd.cu:62-68) — the two fwd outputs +
@@ -210,6 +216,9 @@ struct RasterizeBwdGradsIn {
     const float*   v_render_colors = nullptr; // [I,H,W,3]
     const float*   v_render_alphas = nullptr; // [I,H,W,1]
     bool absgrad = false;                     // kRastHasAbsGrad
+    // Required exactly when RasterizeFwdInputs.depths is set — the upstream gradient of
+    // render_depths (the Σ w·z channel, not the normalised expected depth).
+    const float*   v_render_depths = nullptr; // [I,H,W]
 };
 
 // Gradient outputs — all [I,N,·] flattened, with **no per-image pointer advance** (flatten_ids is
@@ -223,6 +232,7 @@ struct RasterizeBwdGrads {
     std::vector<float> v_colors;      // [I,N,3]
     std::vector<float> v_opacities;   // [I,N]
     std::vector<float> v_means2d_abs; // [I,N,2] only when absgrad (otherwise an empty vector)
+    std::vector<float> v_depths;      // [I,N] only with the depth channel (feeds proj bwd v_depths)
 };
 
 // Spec 06 rng_normal_f32 / rng_philox_u32 — the Philox4x32-10 counter-based RNG (approved as
@@ -375,12 +385,22 @@ struct ResidentStepInputs {
     bool inject_noise = false;
     uint64_t noise_seed = 0, noise_offset = 0;
     float noise_scale = 0.f;
+    // Depth supervision: with gt_depth set and depth_weight > 0 (training steps only) the
+    // inverse-depth L1 joins the loss; want_depth alone renders the expected depth (eval).
+    const float* gt_depth = nullptr; // [depth_height,depth_width] metres, 0 = invalid
+    int depth_width = 0, depth_height = 0;
+    int64_t depth_valid = 0;         // valid sidecar samples over the view (the loss denominator)
+    float depth_weight = 0.f;
+    bool want_depth = false;
 };
 
 struct ResidentStepOutputs {
     float loss = 0.f;     // 0 when forward_only
     int64_t n_isects = 0; // the D9-3 sync point readback value
     std::vector<float> render_colors; // filled only when want_render (otherwise an empty vector)
+    float depth_loss = 0.f;           // the unweighted inverse-depth L1 (0 when not supervised)
+    std::vector<float> render_depths; // [H,W] expected depth (0 below kDepthMinAlpha), only when
+                                      // the depth channel ran and want_render or want_depth
 };
 
 class TrainStepExecutor {

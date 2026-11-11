@@ -44,10 +44,15 @@ using TestReportFn = std::function<void(const char* name, bool passed, int faile
 // Re-runnable runner: failures are computed against a snapshot taken on entry (so that repeated
 // runs in the iOS app do not accumulate and contaminate the count from a previous run). The
 // single-run CLI behavior is the same as before.
-inline int run_all(const TestReportFn& report = {}) {
+// prefix (NULL or empty = every test) restricts the run to the tests whose name starts with it.
+inline int run_all(const TestReportFn& report = {}, const char* prefix = nullptr) {
     auto& r = Registry::shared();
     const int start_failures = r.failures;
+    const std::string want = prefix ? prefix : "";
+    std::size_t ran = 0;
     for (auto& [name, fn] : r.tests) {
+        if (!want.empty() && name.compare(0, want.size(), want) != 0) continue;
+        ran++;
         std::printf("TEST %s\n", name.c_str());
         const int before = r.failures;
         try {
@@ -70,7 +75,7 @@ inline int run_all(const TestReportFn& report = {}) {
     }
     const int failures = r.failures - start_failures;
     if (failures) { std::printf("FAILED (%d checks)\n", failures); return 1; }
-    std::printf("OK (%zu tests)\n", r.tests.size());
+    std::printf("OK (%zu tests)\n", ran);
     return 0;
 }
 

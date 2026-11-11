@@ -187,6 +187,8 @@ inline void validate_rasterize_bwd_inputs(const RasterizeFwdInputs& in,
         throw_invalid(what, "null render_alphas/last_ids (fwd outputs)");
     if (!g.v_render_colors || !g.v_render_alphas)
         throw_invalid(what, "null v_render_colors/v_render_alphas");
+    if ((in.depths != nullptr) != (g.v_render_depths != nullptr))
+        throw_invalid(what, "depths and v_render_depths must be given together");
 }
 
 // The n_isects readback guard for the D11 resident executor (Phase 3.5 Task 1 — carried over from

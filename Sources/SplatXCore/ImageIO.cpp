@@ -139,6 +139,106 @@ ImageF32 load_image_rgb_f32_downscaled(const std::string& path, int factor) {
     return draw_to_rgb_f32(image, static_cast<size_t>(tw), static_cast<size_t>(th), path);
 }
 
+ImageU16 load_png_gray_raw(const std::string& path) {
+    CFURLRef url = make_file_url(path);
+    CGImageSourceRef src = url ? CGImageSourceCreateWithURL(url, nullptr) : nullptr;
+    if (url) CFRelease(url);
+    if (!src) throw std::runtime_error("load_png_gray_raw: cannot open " + path);
+    CGImageRef image = CGImageSourceCreateImageAtIndex(src, 0, nullptr);
+    CFRelease(src);
+    if (!image) throw std::runtime_error("load_png_gray_raw: cannot decode " + path);
+
+    const size_t w = CGImageGetWidth(image), h = CGImageGetHeight(image);
+    const size_t bpc = CGImageGetBitsPerComponent(image);
+    const size_t bpp = CGImageGetBitsPerPixel(image);
+    const size_t stride = CGImageGetBytesPerRow(image);
+    const CGBitmapInfo info = CGImageGetBitmapInfo(image);
+    const CGImageAlphaInfo alpha = CGImageGetAlphaInfo(image);
+    CFDataRef raw = CGDataProviderCopyData(CGImageGetDataProvider(image));
+    CGImageRelease(image);
+    if (!raw) throw std::runtime_error("load_png_gray_raw: no pixel data in " + path);
+    if (w == 0 || h == 0 || (bpc != 8 && bpc != 16) || bpp % bpc != 0) {
+        CFRelease(raw);
+        throw std::runtime_error("load_png_gray_raw: unsupported pixel layout in " + path);
+    }
+    const size_t channels = bpp / bpc;
+    const bool alpha_first = alpha == kCGImageAlphaFirst || alpha == kCGImageAlphaPremultipliedFirst ||
+                             alpha == kCGImageAlphaNoneSkipFirst;
+    const size_t ch = (channels > 1 && alpha_first) ? 1 : 0;
+    const uint32_t order = info & kCGBitmapByteOrderMask;
+    const bool little = order == kCGBitmapByteOrder16Little || order == kCGBitmapByteOrder32Little;
+    const uint8_t* bytes = CFDataGetBytePtr(raw);
+    if (static_cast<size_t>(CFDataGetLength(raw)) < stride * h) {
+        CFRelease(raw);
+        throw std::runtime_error("load_png_gray_raw: truncated pixel data in " + path);
+    }
+
+    ImageU16 out;
+    out.width = static_cast<int>(w);
+    out.height = static_cast<int>(h);
+    out.data.resize(w * h);
+    for (size_t y = 0; y < h; y++) {
+        const uint8_t* row = bytes + y * stride;
+        for (size_t x = 0; x < w; x++) {
+            if (bpc == 8) {
+                out.data[y * w + x] = row[x * channels + ch];
+            } else {
+                const uint8_t* p = row + (x * channels + ch) * 2;
+                out.data[y * w + x] = little ? static_cast<uint16_t>(p[0] | (p[1] << 8))
+                                             : static_cast<uint16_t>((p[0] << 8) | p[1]);
+            }
+        }
+    }
+    CFRelease(raw);
+    return out;
+}
+
+namespace {
+
+void save_png_gray(const ImageU16& img, const std::string& path, bool sixteen) {
+    const size_t w = static_cast<size_t>(img.width), h = static_cast<size_t>(img.height);
+    if (img.width <= 0 || img.height <= 0 || img.data.size() != w * h)
+        throw std::invalid_argument("save_png_gray: data size != W*H (or empty)");
+    std::vector<uint8_t> buf(w * h * (sixteen ? 2 : 1));
+    for (size_t i = 0; i < w * h; i++) {
+        if (sixteen) {
+            buf[i * 2] = static_cast<uint8_t>(img.data[i] & 0xFF);
+            buf[i * 2 + 1] = static_cast<uint8_t>(img.data[i] >> 8);
+        } else {
+            buf[i] = static_cast<uint8_t>(std::min<uint16_t>(img.data[i], 255));
+        }
+    }
+    CGColorSpaceRef gray = CGColorSpaceCreateDeviceGray();
+    CGDataProviderRef provider = CGDataProviderCreateWithData(nullptr, buf.data(), buf.size(), nullptr);
+    const CGBitmapInfo info = static_cast<CGBitmapInfo>(kCGImageAlphaNone) |
+                              (sixteen ? kCGBitmapByteOrder16Little : kCGBitmapByteOrderDefault);
+    CGImageRef image = provider ? CGImageCreate(w, h, sixteen ? 16 : 8, sixteen ? 16 : 8,
+                                                w * (sixteen ? 2 : 1), gray, info, provider,
+                                                nullptr, false, kCGRenderingIntentDefault)
+                                : nullptr;
+    if (provider) CGDataProviderRelease(provider);
+    CGColorSpaceRelease(gray);
+    if (!image) throw std::runtime_error("save_png_gray: CGImageCreate failed");
+    CFURLRef url = make_file_url(path);
+    CGImageDestinationRef dst =
+        url ? CGImageDestinationCreateWithURL(url, CFSTR("public.png"), 1, nullptr) : nullptr;
+    if (url) CFRelease(url);
+    if (!dst) {
+        CGImageRelease(image);
+        throw std::runtime_error("save_png_gray: cannot create " + path);
+    }
+    CGImageDestinationAddImage(dst, image, nullptr);
+    const bool ok = CGImageDestinationFinalize(dst);
+    CFRelease(dst);
+    CGImageRelease(image);
+    if (!ok) throw std::runtime_error("save_png_gray: finalize failed for " + path);
+}
+
+} // namespace
+
+void save_png_gray16(const ImageU16& img, const std::string& path) { save_png_gray(img, path, true); }
+void save_png_gray8(const ImageU16& img, const std::string& path) { save_png_gray(img, path, false); }
+
 void save_png_rgb_f32(const ImageF32& img, const std::string& path) {
     const size_t w = static_cast<size_t>(img.width);
     const size_t h = static_cast<size_t>(img.height);

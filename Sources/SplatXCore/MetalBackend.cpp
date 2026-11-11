@@ -2,6 +2,7 @@
 // Derived from nerfstudio-project/gsplat (Apache-2.0), commit 77ab983 — the isect_tiles host orchestration (a structural port of Intersect.cpp).
 // Reimplemented for Metal/C++.
 #include "splatx/MetalBackend.h"
+#include "splatx/DepthSupervision.h"
 #include "splatx/Validate.h" // shared single source of truth for entry validation (throws as the CPU reference does)
 
 #include <Foundation/Foundation.hpp>
@@ -17,6 +18,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>  // stderr fallback warnings (layered loading — no silent fallback)
 #include <cstdlib> // getenv — the SPLATX_KERNEL_TIMING probe gate
@@ -928,6 +930,8 @@ public:
         out.render_colors.resize(I * HW * kRastCdim);
         out.render_alphas.resize(I * HW);
         out.last_ids.resize(I * HW);
+        const bool has_depth = in.depths != nullptr;
+        if (has_depth) out.render_depths.resize(I * HW);
         if (I == 0) return out; // D8-6 dispatch skip (the validator guarantees HW/n_tiles > 0)
 
         const bool has_bg = in.backgrounds != nullptr;
@@ -944,7 +948,8 @@ public:
         AutoreleasePoolGuard pool;
         MTL::ComputePipelineState* pso =
             pipeline("rasterize_to_pixels_3dgs_fwd", {{kFCRastHasBackground, has_bg},
-                                                      {kFCRastHasMasks, has_masks}});
+                                                      {kFCRastHasMasks, has_masks},
+                                                      {kFCRastHasDepth, has_depth}});
 
         // An empty tensor (N==0 / n_isects==0) cannot use a length-0 buffer (newBuffer returns
         // nullptr) — substitute a minimal dummy the kernel never reads (the range is empty, so
@@ -965,6 +970,11 @@ public:
         auto render_colors = upload_buffer(nullptr, out.render_colors.size() * sizeof(float));
         auto render_alphas = upload_buffer(nullptr, out.render_alphas.size() * sizeof(float));
         auto last_ids = upload_buffer(nullptr, out.last_ids.size() * sizeof(int32_t));
+        NS::SharedPtr<MTL::Buffer> depths, render_depths;
+        if (has_depth) {
+            depths = up(in.depths, IN * sizeof(float));
+            render_depths = upload_buffer(nullptr, out.render_depths.size() * sizeof(float));
+        }
 
         MTL::CommandBuffer* cmd = queue_->commandBuffer();
         MTL::ComputeCommandEncoder* enc = cmd->computeCommandEncoder();
@@ -981,6 +991,10 @@ public:
         enc->setBuffer(render_alphas.get(), 0, 9);
         enc->setBuffer(last_ids.get(), 0, 10);
         enc->setBytes(&P, sizeof(RasterizeParams), 11);
+        if (has_depth) {
+            enc->setBuffer(depths.get(), 0, 12);
+            enc->setBuffer(render_depths.get(), 0, 13);
+        }
         // Spec 05: 1 threadgroup per tile — grid {I*tile_h*tile_w, 1, 1}, threads {256, 1, 1}
         enc->dispatchThreadgroups(MTL::Size::Make(I * n_tiles, 1, 1),
                                   MTL::Size::Make(kRastCtaSize, 1, 1));
@@ -993,6 +1007,9 @@ public:
                     out.render_alphas.size() * sizeof(float));
         std::memcpy(out.last_ids.data(), last_ids->contents(),
                     out.last_ids.size() * sizeof(int32_t));
+        if (has_depth)
+            std::memcpy(out.render_depths.data(), render_depths->contents(),
+                        out.render_depths.size() * sizeof(float));
         return out;
     }
 
@@ -1020,6 +1037,8 @@ public:
         out.v_colors.assign(IN * kRastCdim, 0.f);
         out.v_opacities.assign(IN, 0.f);
         if (g.absgrad) out.v_means2d_abs.assign(IN * 2, 0.f);
+        const bool has_depth = in.depths != nullptr;
+        if (has_depth) out.v_depths.assign(IN, 0.f);
         if (I == 0 || in.n_isects == 0) return out; // dispatch skip (Bwd.cu:365-369 / D8-6)
 
         const bool has_bg = in.backgrounds != nullptr;
@@ -1037,7 +1056,8 @@ public:
         MTL::ComputePipelineState* pso =
             pipeline("rasterize_to_pixels_3dgs_bwd", {{kFCRastHasBackground, has_bg},
                                                       {kFCRastHasMasks, has_masks},
-                                                      {kFCRastHasAbsGrad, g.absgrad}});
+                                                      {kFCRastHasAbsGrad, g.absgrad},
+                                                      {kFCRastHasDepth, has_depth}});
 
         // The shared inputs (buffers 0-7) — uploaded identically to rasterize_fwd. n_isects>0 is
         // guaranteed at this point, so the gaussian tensors are non-empty (the validator + the
@@ -1066,13 +1086,20 @@ public:
         NS::SharedPtr<MTL::Buffer> v_means2d_abs;
         if (g.absgrad)
             v_means2d_abs = upload_buffer(nullptr, out.v_means2d_abs.size() * sizeof(float));
+        NS::SharedPtr<MTL::Buffer> depths, v_render_depths, v_depths;
+        if (has_depth) {
+            depths = upload_buffer(in.depths, IN * sizeof(float));
+            v_render_depths = upload_buffer(g.v_render_depths, I * HW * sizeof(float));
+            v_depths = upload_buffer(nullptr, out.v_depths.size() * sizeof(float));
+        }
 
         MTL::CommandBuffer* cmd = queue_->commandBuffer();
         // D8-1: the gradient accumulation buffers MUST be zero-filled through encode_zero_fill
         // (encoding order blit → compute; unallocated (nullptr) entries are skipped by the helper).
-        MTL::Buffer* const grad_bufs[] = {v_means2d.get(), v_conics.get(), v_colors.get(),
-                                          v_opacities.get(), v_means2d_abs.get()};
-        encode_zero_fill(cmd, grad_bufs, 5);
+        MTL::Buffer* const grad_bufs[] = {v_means2d.get(),   v_conics.get(),
+                                          v_colors.get(),    v_opacities.get(),
+                                          v_means2d_abs.get(), v_depths.get()};
+        encode_zero_fill(cmd, grad_bufs, 6);
 
         MTL::ComputeCommandEncoder* enc = cmd->computeCommandEncoder();
         enc->setComputePipelineState(pso);
@@ -1094,6 +1121,11 @@ public:
         enc->setBuffer(v_opacities.get(), 0, 15);
         if (g.absgrad) enc->setBuffer(v_means2d_abs.get(), 0, 16);
         enc->setBytes(&P, sizeof(RasterizeParams), 17);
+        if (has_depth) {
+            enc->setBuffer(depths.get(), 0, 18);
+            enc->setBuffer(v_render_depths.get(), 0, 19);
+            enc->setBuffer(v_depths.get(), 0, 20);
+        }
         // Spec 05: grid {I*tile_h*tile_w, 1, 1} × threads {tile_size, tile_size, 1}, 2D
         enc->dispatchThreadgroups(MTL::Size::Make(I * n_tiles, 1, 1),
                                   MTL::Size::Make(kRastTileSize, kRastTileSize, 1));
@@ -1111,6 +1143,9 @@ public:
         if (g.absgrad)
             std::memcpy(out.v_means2d_abs.data(), v_means2d_abs->contents(),
                         out.v_means2d_abs.size() * sizeof(float));
+        if (has_depth)
+            std::memcpy(out.v_depths.data(), v_depths->contents(),
+                        out.v_depths.size() * sizeof(float));
         return out;
     }
 
@@ -1675,7 +1710,8 @@ public:
         v_sh0_ = alloc(rows * 3 * sizeof(float));
         if (dims_[5] > 0) v_shN_ = alloc(rows * dims_[5] * sizeof(float));
         v_depths_zero_ = alloc(rows * sizeof(float));
-        std::memset(v_depths_zero_->contents(), 0, rows * sizeof(float)); // always 0 (D6)
+        std::memset(v_depths_zero_->contents(), 0, rows * sizeof(float)); // RGB-only steps
+        v_depths_ = alloc(rows * sizeof(float));
         noise_ = alloc(rows * 3 * sizeof(float));
         if (d.antialiased) {
             comps_ = alloc(rows * sizeof(float));
@@ -1704,6 +1740,15 @@ public:
         if (!in.forward_only && !in.gt_rgb)
             throw std::invalid_argument("TrainStepExecutor::step: null gt_rgb");
         const bool use_ssim = d_.ssim_weight > 0.0f && !in.forward_only;
+        if (in.gt_depth && (in.depth_width < 1 || in.depth_height < 1))
+            throw std::invalid_argument("TrainStepExecutor::step: gt_depth needs positive dims");
+        if (!(in.depth_weight >= 0.0f && std::isfinite(in.depth_weight)))
+            throw std::invalid_argument("TrainStepExecutor::step: depth_weight must be >= 0");
+        // The depth channel runs for a supervised training step or an expected-depth render; the
+        // RGB-only kernel variants are untouched otherwise.
+        const bool use_depth_loss = !in.forward_only && in.gt_depth && in.depth_weight > 0.0f &&
+                                    in.depth_valid > 0;
+        const bool run_depth = use_depth_loss || in.want_depth;
         if (use_ssim && (in.height < static_cast<int>(kSsimWindowSize) ||
                          in.width < static_cast<int>(kSsimWindowSize)))
             throw std::invalid_argument( // matches validate_ssim_inputs (the valid map would be empty)
@@ -1720,6 +1765,13 @@ public:
 
         AutoreleasePoolGuard pool;
         ensure_image_capacity(HW, static_cast<std::size_t>(tw) * th, use_ssim);
+        if (run_depth) ensure_depth_image_capacity();
+        const std::size_t depth_px =
+            use_depth_loss ? static_cast<std::size_t>(in.depth_width) * in.depth_height : 0;
+        if (use_depth_loss) {
+            ensure_depth_capacity(depth_px);
+            std::memcpy(gt_depth_->contents(), in.gt_depth, depth_px * sizeof(float));
+        }
         std::memcpy(viewmat_buf_->contents(), in.viewmat, 16 * sizeof(float));
         std::memcpy(K_buf_->contents(), in.K, 9 * sizeof(float));
         if (!in.forward_only)
@@ -1896,6 +1948,7 @@ public:
                 add(v_means_.get(), Ns * 3 * sizeof(float));
                 add(v_quats_.get(), Ns * 4 * sizeof(float));
                 add(v_scales_.get(), Ns * 3 * sizeof(float));
+                if (use_depth_loss) add(v_depths_.get(), Ns * sizeof(float));
                 if (n_isects == 0)
                     add(offsets_.get(), static_cast<std::size_t>(tw) * th * sizeof(int32_t));
                 fill_prefix(cmd, fills, ranges, nf);
@@ -1966,8 +2019,13 @@ public:
 
             // raster fwd — the same bindings as MetalBackend::rasterize_fwd (no bg, no masks)
             enc->setComputePipelineState(
-                mb_.pipeline("rasterize_to_pixels_3dgs_fwd",
-                             {{kFCRastHasBackground, false}, {kFCRastHasMasks, false}}));
+                mb_.pipeline("rasterize_to_pixels_3dgs_fwd", {{kFCRastHasBackground, false},
+                                                              {kFCRastHasMasks, false},
+                                                              {kFCRastHasDepth, run_depth}}));
+            if (run_depth) {
+                enc->setBuffer(depths_.get(), 0, 12);
+                enc->setBuffer(render_depths_.get(), 0, 13);
+            }
             enc->setBuffer(means2d_.get(), 0, 0);
             enc->setBuffer(conics_.get(), 0, 1);
             enc->setBuffer(colors_.get(), 0, 2);
@@ -2043,7 +2101,23 @@ public:
                     enc->setBytes(&P, sizeof(P), 4);
                     dispatch(enc, n_px);
                 }
-                seg_cut("res2_loss_grad"); // train_l1_grad (+ the SSIM combination)
+                if (use_depth_loss) {
+                    TrainDepthGradParams P;
+                    P.width = W;
+                    P.height = H;
+                    P.depth_width = static_cast<uint32_t>(in.depth_width);
+                    P.depth_height = static_cast<uint32_t>(in.depth_height);
+                    P.g = in.depth_weight / static_cast<float>(in.depth_valid);
+                    enc->setComputePipelineState(mb_.pipeline("train_depth_grad"));
+                    enc->setBuffer(render_depths_.get(), 0, 0);
+                    enc->setBuffer(render_alphas_.get(), 0, 1);
+                    enc->setBuffer(gt_depth_.get(), 0, 2);
+                    enc->setBuffer(v_render_depths_.get(), 0, 3);
+                    enc->setBuffer(v_render_alphas_.get(), 0, 4);
+                    enc->setBytes(&P, sizeof(P), 5);
+                    dispatch(enc, HW);
+                }
+                seg_cut("res2_loss_grad"); // train_l1_grad (+ the SSIM combination, + depth)
 
                 if (n_isects > 0) {
                     // raster bwd — the same bindings as MetalBackend::rasterize_bwd (absgrad off).
@@ -2053,7 +2127,8 @@ public:
                         mb_.pipeline("rasterize_to_pixels_3dgs_bwd",
                                      {{kFCRastHasBackground, false},
                                       {kFCRastHasMasks, false},
-                                      {kFCRastHasAbsGrad, false}}));
+                                      {kFCRastHasAbsGrad, false},
+                                      {kFCRastHasDepth, use_depth_loss}}));
                     enc->setBuffer(means2d_.get(), 0, 0);
                     enc->setBuffer(conics_.get(), 0, 1);
                     enc->setBuffer(colors_.get(), 0, 2);
@@ -2063,7 +2138,14 @@ public:
                     enc->setBuffer(render_alphas_.get(), 0, 8);
                     enc->setBuffer(last_ids_.get(), 0, 9);
                     enc->setBuffer(v_render_.get(), 0, 10);
-                    enc->setBuffer(v_render_alphas_zero_.get(), 0, 11);
+                    enc->setBuffer(use_depth_loss ? v_render_alphas_.get()
+                                                  : v_render_alphas_zero_.get(),
+                                   0, 11);
+                    if (use_depth_loss) {
+                        enc->setBuffer(depths_.get(), 0, 18);
+                        enc->setBuffer(v_render_depths_.get(), 0, 19);
+                        enc->setBuffer(v_depths_.get(), 0, 20);
+                    }
                     enc->setBuffer(v_means2d_.get(), 0, 12);
                     enc->setBuffer(v_conics_.get(), 0, 13);
                     enc->setBuffer(v_colors_.get(), 0, 14);
@@ -2132,7 +2214,7 @@ public:
                     enc->setBuffer(v_comp_.get(), 0, 12);
                 }
                 enc->setBuffer(v_means2d_.get(), 0, 9);
-                enc->setBuffer(v_depths_zero_.get(), 0, 10);
+                enc->setBuffer(use_depth_loss ? v_depths_.get() : v_depths_zero_.get(), 0, 10);
                 enc->setBuffer(v_conics_.get(), 0, 11);
                 enc->setBuffer(v_means_.get(), 0, 13);
                 enc->setBuffer(v_quats_.get(), 0, 15);
@@ -2260,6 +2342,19 @@ public:
             }
         }
         if (in.want_render) out.render_colors.assign(render, render + n_px); // keeps the raw render
+        if (run_depth) {
+            const float* acc = static_cast<const float*>(render_depths_->contents());
+            const float* alpha = static_cast<const float*>(render_alphas_->contents());
+            if (use_depth_loss)
+                out.depth_loss = depth_l1_loss(acc, alpha, in.gt_depth, static_cast<int>(W),
+                                               static_cast<int>(H), in.depth_width,
+                                               in.depth_height, in.depth_valid);
+            if (in.want_render || in.want_depth) {
+                out.render_depths.resize(HW);
+                for (std::size_t i = 0; i < HW; i++)
+                    out.render_depths[i] = expected_depth(acc[i], alpha[i]);
+            }
+        }
         return out;
     }
 
@@ -2399,6 +2494,7 @@ private:
             std::memset(v_render_alphas_zero_->contents(), 0, cap * sizeof(float));
             image_cap_ = cap;
             ssim_cap_ = 0; // the ssim maps are image-sized too — reallocated alongside
+            depth_image_cap_ = 0;
         }
         if (need_ssim && image_cap_ > ssim_cap_) {
             ssim_map_ = alloc(image_cap_ * 3 * sizeof(float));
@@ -2412,6 +2508,21 @@ private:
             offsets_ = alloc(n_tiles * sizeof(int32_t));
             tiles_cap_ = n_tiles;
         }
+    }
+
+    // The depth channel's image-sized buffers, allocated only once a step runs the channel.
+    void ensure_depth_image_capacity() {
+        if (depth_image_cap_ >= image_cap_ && render_depths_) return;
+        render_depths_ = alloc(image_cap_ * sizeof(float));
+        v_render_depths_ = alloc(image_cap_ * sizeof(float));
+        v_render_alphas_ = alloc(image_cap_ * sizeof(float));
+        depth_image_cap_ = image_cap_;
+    }
+
+    void ensure_depth_capacity(std::size_t n) {
+        if (n <= depth_cap_ && gt_depth_) return;
+        gt_depth_ = alloc(n * sizeof(float));
+        depth_cap_ = n;
     }
 
     void sync_params(const ResidentParamSync& s, bool to_device) {
@@ -2449,14 +2560,16 @@ private:
     NS::SharedPtr<MTL::Buffer> tiles_per_gauss_, cum_, block_sums_;
     // bwd gradients (arena-resident)
     NS::SharedPtr<MTL::Buffer> v_means2d_, v_conics_, v_colors_, v_opacities_, v_coeffs_,
-        v_dirs_, v_means_, v_quats_, v_scales_, v_sh0_, v_shN_, v_comp_, v_depths_zero_;
+        v_dirs_, v_means_, v_quats_, v_scales_, v_sh0_, v_shN_, v_comp_, v_depths_zero_, v_depths_;
     NS::SharedPtr<MTL::Buffer> noise_, viewmat_buf_, K_buf_;
     // isect- and image-sized (capacity-based growth with reuse)
     NS::SharedPtr<MTL::Buffer> keys_[2], vals_[2], counts_, reduced_;
     NS::SharedPtr<MTL::Buffer> gt_, render_colors_, render_alphas_, last_ids_, v_render_,
-        v_render_alphas_zero_, offsets_;
+        v_render_alphas_zero_, offsets_, render_depths_, v_render_depths_, v_render_alphas_,
+        gt_depth_;
     NS::SharedPtr<MTL::Buffer> ssim_map_, c_mu_, c_sigma_, c_cross_, v_dssim_;
-    std::size_t isect_cap_ = 0, image_cap_ = 0, ssim_cap_ = 0, tiles_cap_ = 0;
+    std::size_t isect_cap_ = 0, image_cap_ = 0, ssim_cap_ = 0, tiles_cap_ = 0, depth_cap_ = 0,
+                depth_image_cap_ = 0;
 };
 
 std::unique_ptr<TrainStepExecutor>

@@ -24,6 +24,7 @@ enum SXFunctionConstantIndex {
     kFCRastHasBackground = 24,
     kFCRastHasMasks      = 25,
     kFCRastHasAbsGrad    = 26,
+    kFCRastHasDepth      = 27,
     // --- adam / mcmc (32–39) ---
     kFCAdamHasValidMask  = 32,
     // --- ssim (40–47) ---
@@ -44,6 +45,7 @@ constant bool kIsectAccuTile     [[function_constant(kFCIsectAccuTile)]];
 constant bool kRastHasBackground [[function_constant(kFCRastHasBackground)]];
 constant bool kRastHasMasks      [[function_constant(kFCRastHasMasks)]];
 constant bool kRastHasAbsGrad    [[function_constant(kFCRastHasAbsGrad)]];
+constant bool kRastHasDepth      [[function_constant(kFCRastHasDepth)]];
 constant bool kAdamHasValidMask  [[function_constant(kFCAdamHasValidMask)]];
 constant bool kSsimNeedCoeffs    [[function_constant(kFCSsimNeedCoeffs)]];
 #endif // __METAL_VERSION__

@@ -99,6 +99,10 @@ public final class SplatXTrainer: Sendable {
         public var evalEvery: Int = 0
         /// SSIM loss weight λ ∈ [0,1] (gsplat default 0.2).
         public var ssimWeight: Float = 0.2
+        /// Weight of the confidence-masked inverse-depth L1 on views with a depth sidecar
+        /// (depths/<stem>.png beside images/ — splatx_train_c.h SxTrainArgs.depth_weight).
+        /// 0 = off.
+        public var depthWeight: Float = 0
         /// Anti-aliasing (the Mip-Splatting compensation — default off = gsplat classic).
         public var antialiased: Bool = false
         /// device-resident train_step (default on — the reference path for performance).
@@ -174,6 +178,7 @@ public final class SplatXTrainer: Sendable {
         public let memoryFootprintMB: Int  // task_vm_info.phys_footprint
         public let peakMemoryFootprintMB: Int
         public let availableMemoryMB: Int  // os_proc_available_memory (iOS — 0 on macOS)
+        public let depthRMSE: Double?      // held-out expected-depth RMSE (m) on an eval tick with sidecars
     }
 
     /// An in-memory snapshot (app round 3 Task 1) — a pointer view of the current model during
@@ -229,6 +234,7 @@ public final class SplatXTrainer: Sendable {
         public let runUntil: Int
         public let totalIterations: Int    // the schedule denominator (differs from runUntil on extended resume)
         public let finalPSNR: Double?      // the final eval (when testSplit > 0 && the run completed)
+        public let finalDepthRMSE: Double? // held-out expected-depth RMSE (m) — needs test views with sidecars
         public let trainSeconds: Double    // wall clock of the training loop
         public let wallClockSeconds: Double
         public let splatCount: Int         // N rows that passed the export filter
@@ -507,6 +513,7 @@ public final class SplatXTrainer: Sendable {
                     a.test_split = Int32(opts.testSplit)
                     a.eval_every = Int32(opts.evalEvery)
                     a.ssim_weight = opts.ssimWeight
+                    a.depth_weight = opts.depthWeight
                     a.antialiased = opts.antialiased ? 1 : 0
                     a.resident = opts.resident ? 1 : 0
                     a.resume_checkpoint = cp.resume
@@ -572,6 +579,7 @@ public final class SplatXTrainer: Sendable {
             runUntil: Int(stats.run_until),
             totalIterations: Int(stats.total_iters),
             finalPSNR: stats.final_eval_psnr.isNaN ? nil : Double(stats.final_eval_psnr),
+            finalDepthRMSE: stats.final_depth_rmse.isNaN ? nil : Double(stats.final_depth_rmse),
             trainSeconds: stats.train_seconds,
             wallClockSeconds: snapshot.elapsed,
             splatCount: Int(stats.exported_splats),
@@ -651,7 +659,8 @@ private final class ProgressRelay: Sendable {
             thermalState: Int(p.thermal_state), coolingDown: false,
             memoryFootprintMB: footprint,
             peakMemoryFootprintMB: state.withLock { $0.peakFootprintMB },
-            availableMemoryMB: available))
+            availableMemoryMB: available,
+            depthRMSE: p.depth_rmse.isNaN ? nil : Double(p.depth_rmse)))
     }
 
     /// The synthesized cooling tick — the input for the UI "Cooling down…" while parked (no step
@@ -668,7 +677,7 @@ private final class ProgressRelay: Sendable {
             elapsedSeconds: Date().timeIntervalSince(startedAt),
             thermalState: Int(sx_thermal_get_state()), coolingDown: true,
             memoryFootprintMB: footprint, peakMemoryFootprintMB: t.peakFootprintMB,
-            availableMemoryMB: available))
+            availableMemoryMB: available, depthRMSE: nil))
     }
 
     /// task_vm_info.phys_footprint (MB) — the same metric as the Xcode memory gauge.

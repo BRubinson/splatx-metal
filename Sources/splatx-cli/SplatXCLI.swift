@@ -79,6 +79,10 @@ struct Train: ParsableCommand {
             help: "SSIM loss weight λ ∈ [0,1] — loss = (1-λ)·L1 + λ·(1-SSIM) (gsplat ssim_lambda 0.2, 0=pure L1)")
     var ssimWeight: Float = 0.2
 
+    @Option(name: .customLong("depth-weight"),
+            help: "Depth supervision weight w ≥ 0 — loss += w·(confidence-masked inverse-depth L1 of the expected depth) on views with a depths/<stem>.png sidecar (16-bit mm; optional depths/<stem>.conf.png ARConfidenceLevel). 0=off")
+    var depthWeight: Float = 0
+
     @Flag(name: .long,
           help: "Anti-aliasing (Mip-Splatting 2D compensation) — trains with opacity multiplied by the projection compensation factor (reproduces gsplat rasterize_mode=antialiased; default off=classic — the published-benchmark condition. Standard PLY has no AA flag, so generic viewers render without compensation; .spz output records the antialiased flag in its header — see the README caveat)")
     var antialiased: Bool = false
@@ -138,6 +142,7 @@ struct Train: ParsableCommand {
                                 a.test_split = Int32(testSplit)
                                 a.eval_every = Int32(evalEvery)
                                 a.ssim_weight = ssimWeight
+                                a.depth_weight = depthWeight
                                 a.antialiased = antialiased ? 1 : 0
                                 a.resident = noResident ? 0 : 1
                                 a.resume_checkpoint = resumePtr

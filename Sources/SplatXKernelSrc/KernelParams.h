@@ -175,6 +175,16 @@ struct TrainGradChainParams {
     float reg_w;
 };
 
+// train_depth_grad — the confidence-masked inverse-depth L1 over the expected depth (reproduces
+// the host depth_loss_and_grad). g = depth_weight / (count of valid sidecar samples over the view).
+struct TrainDepthGradParams {
+    uint  width;        // view
+    uint  height;
+    uint  depth_width;  // sidecar
+    uint  depth_height;
+    float g;
+};
+
 #ifndef __METAL_VERSION__
 static_assert(sizeof(TrainEltParams) == 4, "TrainEltParams: host/device layout mismatch");
 static_assert(sizeof(TrainPrepShParams) == 16, "TrainPrepShParams: host/device layout mismatch");
@@ -182,6 +192,8 @@ static_assert(sizeof(TrainCoeffsParams) == 8, "TrainCoeffsParams: host/device la
 static_assert(sizeof(TrainL1GradParams) == 16, "TrainL1GradParams: host/device layout mismatch");
 static_assert(sizeof(TrainGradChainParams) == 8,
               "TrainGradChainParams: host/device layout mismatch");
+static_assert(sizeof(TrainDepthGradParams) == 20,
+              "TrainDepthGradParams: host/device layout mismatch");
 #endif
 
 // spec 06 rng_normal_f32 / rng_philox_u32 (Rng.metal — written in-house, literature citation in

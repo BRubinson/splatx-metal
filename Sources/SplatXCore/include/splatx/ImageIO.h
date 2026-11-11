@@ -13,6 +13,7 @@
 // round(v*255) — the round-trip error is ≤ 0.5/255 (tested as a pair with the ImageIO load).
 #pragma once
 #include <cmath>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -42,5 +43,16 @@ void save_png_rgb_f32(const ImageF32& img, const std::string& path); // throws o
 // (sRGB 8-bit RGBX read → f32). factor 1 is equivalent to the default load.
 // Throws on failure or on a dimension < 1.
 ImageF32 load_image_rgb_f32_downscaled(const std::string& path, int factor);
+
+// Single-channel PNG sample values read raw (no colour management, no gamma): a 16-bit greyscale
+// PNG gives its 0..65535 codes, an 8-bit one its 0..255 codes (the depth sidecar convention:
+// millimetres and ARConfidenceLevel). Images with more channels take channel 0. Throws on failure.
+struct ImageU16 {
+    int width = 0, height = 0;
+    std::vector<uint16_t> data; // [H,W] row-major, row 0 = top
+};
+ImageU16 load_png_gray_raw(const std::string& path);
+void save_png_gray16(const ImageU16& img, const std::string& path); // throws on failure
+void save_png_gray8(const ImageU16& img, const std::string& path);  // values clamp to 255
 
 } // namespace splatx

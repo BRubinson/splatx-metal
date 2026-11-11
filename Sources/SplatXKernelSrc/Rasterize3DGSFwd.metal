@@ -67,6 +67,10 @@ kernel void rasterize_to_pixels_3dgs_fwd(
     device float*               render_alphas [[buffer(9)]],  // [I,H,W,1]
     device int*                 last_ids      [[buffer(10)]], // [I,H,W]
     constant RasterizeParams&   P             [[buffer(11)]],
+    // Expected-depth channel (gsplat RGB+ED): composites the per-Gaussian camera z beside the
+    // colours; the caller divides by render_alphas to get the expected depth.
+    device const float*         depths        [[buffer(12), function_constant(kRastHasDepth)]], // [I,N]
+    device float*               render_depths [[buffer(13), function_constant(kRastHasDepth)]], // [I,H,W]
     uint block_id  [[threadgroup_position_in_grid]],          // = linear_block_index (no block_offset needed)
     uint tid       [[thread_index_in_threadgroup]],
     uint simd_lane [[thread_index_in_simdgroup]],
@@ -96,6 +100,7 @@ kernel void rasterize_to_pixels_3dgs_fwd(
     last_ids      += image_id * P.image_height * P.image_width;
     if (kRastHasBackground) backgrounds += image_id * CDIM;
     if (kRastHasMasks)      masks       += image_id * tiles_per_image;
+    if (kRastHasDepth)      render_depths += image_id * P.image_height * P.image_width;
 
     const uint out_x  = tile_x * TILE_SIZE + thread_x;
     const uint out_y  = tile_y * TILE_SIZE + thread_y; // PPT=1 — the p·ROW_STRIDE term is eliminated
@@ -116,6 +121,7 @@ kernel void rasterize_to_pixels_3dgs_fwd(
                 render_colors[pix_id * CDIM + k] = kRastHasBackground ? backgrounds[k] : 0.0f;
             render_alphas[pix_id] = 0.0f;
             last_ids[pix_id]      = 0;
+            if (kRastHasDepth) render_depths[pix_id] = 0.0f;
         }
         return;
     }
@@ -138,6 +144,7 @@ kernel void rasterize_to_pixels_3dgs_fwd(
     float T        = 1.0f;              // transmittance (Fwd.cu:179-184 — spec 05 gives the rationale for float)
     uint  cur_idx  = 0u;                // absolute isect index of the last contribution, 0 if none (:186)
     float pix_out[CDIM] = {0.f, 0.f, 0.f};
+    float pix_depth = 0.f;
 
     for (uint b = 0; b < num_batches; ++b) {
         // Cooperative load: one gaussian per thread (Fwd.cu:197-208)
@@ -175,6 +182,7 @@ kernel void rasterize_to_pixels_3dgs_fwd(
             const float vis = alpha * T; // this gaussian's contribution weight for the pixel (:254)
             for (uint k = 0; k < CDIM; ++k) // weighted-sum fma (paired with CPU std::fma — the 1a Task 4 lesson)
                 pix_out[k] = metal::fma(colors[g * CDIM + k], vis, pix_out[k]);
+            if (kRastHasDepth) pix_depth = metal::fma(depths[g], vis, pix_depth);
             cur_idx = (uint)(batch_start + (int)t); // absolute isect index (:261)
             T       = next_T;
         }
@@ -200,5 +208,6 @@ kernel void rasterize_to_pixels_3dgs_fwd(
             render_colors[pix_id * CDIM + k] =
                 kRastHasBackground ? metal::fma(T, backgrounds[k], pix_out[k]) : pix_out[k];
         last_ids[pix_id] = (int)cur_idx;
+        if (kRastHasDepth) render_depths[pix_id] = pix_depth;
     }
 }

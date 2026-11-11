@@ -777,6 +777,8 @@ RasterizeFwdOutputs rasterize_fwd_cpu(const RasterizeFwdInputs& in) {
     out.render_colors.resize(I * H * W * CDIM);
     out.render_alphas.resize(I * H * W);
     out.last_ids.resize(I * H * W);
+    const bool has_depth = in.depths != nullptr;
+    if (has_depth) out.render_depths.resize(I * H * W);
 
     for (size_t img = 0; img < I; img++) {
         // Per-image pointer advance (Fwd.cu:92-103) — the gaussian inputs (means2d/conics/colors/
@@ -787,6 +789,7 @@ RasterizeFwdOutputs rasterize_fwd_cpu(const RasterizeFwdInputs& in) {
         float* rc = out.render_colors.data() + img * H * W * CDIM;
         float* ra = out.render_alphas.data() + img * H * W;
         int32_t* li = out.last_ids.data() + img * H * W;
+        float* rd = has_depth ? out.render_depths.data() + img * H * W : nullptr;
 
         for (size_t tile = 0; tile < n_tiles; tile++) {
             const size_t tile_x = tile % in.tile_width;
@@ -815,6 +818,7 @@ RasterizeFwdOutputs rasterize_fwd_cpu(const RasterizeFwdInputs& in) {
                             rc[pix * CDIM + k] = bg ? bg[k] : 0.f;
                         ra[pix] = 0.f;
                         li[pix] = 0;
+                        if (rd) rd[pix] = 0.f;
                         continue;
                     }
 
@@ -823,6 +827,7 @@ RasterizeFwdOutputs rasterize_fwd_cpu(const RasterizeFwdInputs& in) {
                     float T = 1.0f;
                     uint32_t cur_idx = 0u; // no contribution = 0 (a dual-purpose encoding — Fwd.cu:186)
                     float pix_out[CDIM] = {0.f, 0.f, 0.f};
+                    float pix_depth = 0.f;
 
                     // front-to-back alpha blending (Fwd.cu:223-263)
                     for (int32_t idx = range_start; idx < range_end; idx++) {
@@ -838,6 +843,7 @@ RasterizeFwdOutputs rasterize_fwd_cpu(const RasterizeFwdInputs& in) {
                         const float vis = gw.alpha * T;
                         for (size_t k = 0; k < CDIM; k++) // weighted-sum fma (paired with metal::fma in Metal)
                             pix_out[k] = std::fma(in.colors[g * CDIM + k], vis, pix_out[k]);
+                        if (rd) pix_depth = std::fma(in.depths[g], vis, pix_depth);
                         cur_idx = static_cast<uint32_t>(idx); // absolute isect index (:261)
                         T = next_T;
                     }
@@ -847,6 +853,7 @@ RasterizeFwdOutputs rasterize_fwd_cpu(const RasterizeFwdInputs& in) {
                     for (size_t k = 0; k < CDIM; k++)
                         rc[pix * CDIM + k] = bg ? std::fma(T, bg[k], pix_out[k]) : pix_out[k];
                     li[pix] = static_cast<int32_t>(cur_idx);
+                    if (rd) rd[pix] = pix_depth;
                 }
             }
         }

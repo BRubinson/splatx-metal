@@ -8,6 +8,10 @@
 namespace splatx {
 
 TrainingInput training_input_from_colmap(const ColmapBundle& b, const std::string& images_dir) {
+    namespace fs = std::filesystem;
+    const fs::path depths_dir = fs::path(images_dir).parent_path() / "depths";
+    std::error_code ec;
+    const bool has_depths_dir = fs::is_directory(depths_dir, ec);
     std::unordered_map<int32_t, const ColmapCamera*> cam_by_id;
     for (const auto& c : b.cameras) cam_by_id[c.id] = &c;
 
@@ -34,6 +38,15 @@ TrainingInput training_input_from_colmap(const ColmapBundle& b, const std::strin
         tc.width = static_cast<int>(cam.width);
         tc.height = static_cast<int>(cam.height);
         tc.image_path = images_dir + "/" + im.name;
+        if (has_depths_dir) {
+            const fs::path stem = fs::path(im.name).replace_extension();
+            const fs::path depth = depths_dir / fs::path(stem.string() + ".png");
+            const fs::path conf = depths_dir / fs::path(stem.string() + ".conf.png");
+            if (fs::is_regular_file(depth, ec)) {
+                tc.depth_path = depth.string();
+                if (fs::is_regular_file(conf, ec)) tc.confidence_path = conf.string();
+            }
+        }
         ti.cameras.push_back(std::move(tc));
     }
 

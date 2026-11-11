@@ -63,7 +63,7 @@ let package = Package(
                 .define("KERNEL_SRC_DIR", to: "\"\(Context.packageDirectory)/Sources/SplatXKernelSrc\""),
             ]
         ),
-        .testTarget(name: "SplatXMetalTests", dependencies: ["SplatXMetal"]),
+        .testTarget(name: "SplatXMetalTests", dependencies: ["SplatXMetal", "SplatXTests"]),
         .executableTarget(
             name: "splatx-cli",
             dependencies: [

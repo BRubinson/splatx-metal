@@ -36,6 +36,11 @@ SX_KCONST kSsimWindow[11] = {
     0.21300554275512695f,   0.10936068743467331f,   0.036000773310661316f,
     0.0075987582094967365f, 0.001028380123898387f};
 
+// Depth supervision (expected depth ED = Σwz / α against a LiDAR sidecar): a pixel enters the
+// inverse-depth loss and the depth RMSE only with α >= kDepthMinAlpha and ED >= kDepthMinZ (metres).
+SX_KCONST kDepthMinAlpha = 0.01f;
+SX_KCONST kDepthMinZ     = 1e-3f;
+
 #undef SX_KCONST
 
 // spec 03 §Kernel 2 prefix scan block configuration — the host (num_groups computation and grid
@@ -85,5 +90,12 @@ SX_KCONST_UINT kSsimTileSize   = 16;                                  // fwd/bwd
 SX_KCONST_UINT kSsimApron      = kSsimTileSize + kSsimWindowSize - 1; // 26
 
 #undef SX_KCONST_UINT
+
+// Nearest-neighbour lookup of a view pixel in the depth sidecar grid: floor((x + 0.5)·side/view),
+// shared by the host loss, the eval RMSE and train_depth_grad.
+inline unsigned int sx_depth_sidecar_coord(unsigned int x, unsigned int view, unsigned int side) {
+    const unsigned int s = ((2u * x + 1u) * side) / (2u * view);
+    return s < side ? s : side - 1u;
+}
 
 #endif // SPLATX_KERNEL_CONSTANTS_H

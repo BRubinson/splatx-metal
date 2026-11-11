@@ -16,6 +16,10 @@ struct TrainingCamera {
     float K[9];              // intrinsics
     int width = 0, height = 0;
     std::string image_path;  // image file path (lazy loading)
+    // Depth sidecar beside the image folder (DepthSupervision.h): depths/<stem>.png and
+    // depths/<stem>.conf.png, each empty when the file does not exist.
+    std::string depth_path;
+    std::string confidence_path;
 };
 
 struct TrainingInput {
@@ -24,6 +28,7 @@ struct TrainingInput {
     std::vector<uint8_t> seed_rgb;  // [M,3]
 };
 
+// Also resolves each image's depth sidecar under <parent of images_dir>/depths/.
 TrainingInput training_input_from_colmap(const ColmapBundle& bundle, const std::string& images_dir);
 
 // Resolves the image folder for a given factor (Integration Task 2 — the iOS capture app bundle

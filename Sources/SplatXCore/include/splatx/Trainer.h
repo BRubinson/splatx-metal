@@ -6,6 +6,7 @@
 #pragma once
 #include "splatx/AdamState.h"
 #include "splatx/Checkpoint.h"
+#include "splatx/DepthSupervision.h"
 #include "splatx/KernelBackend.h"
 #include "splatx/SplatCloud.h"
 #include "splatx/TrainingInput.h"
@@ -266,6 +267,10 @@ struct TrainConfig {
     // path shares the resident kernel activations, so bit-exact consistency within the path (a
     // self-render loss of 0, and the like) is preserved.
     bool resident = true;
+    // Depth supervision weight (DepthSupervision.h): a step given a DepthTarget adds
+    // depth_weight·(inverse-depth L1 over the expected depth) to the loss. 0 = off — the RGB-only
+    // kernels and the previous trajectory, bit for bit in the forward. Must be finite and >= 0.
+    float depth_weight = 0.0f;
     // MCMC densification (Phase 2 Task 3 — with enabled=false this is the same fixed-N training
     // as 1c)
     McmcOptions mcmc;
@@ -345,6 +350,15 @@ struct TrainStepResult {
     int64_t n_added = 0;     // number of newly added slots (McmcRefineResult.added_src)
     // [H,W,3] — the last render (the input for --save-preview).
     std::vector<float> render_colors;
+    // The unweighted inverse-depth L1 of this step (0 when the step was not depth-supervised) —
+    // reported beside, never inside, loss.
+    float depth_loss = 0.0f;
+};
+
+// A forward render with the expected-depth channel (eval of the held-out depth error).
+struct DepthRender {
+    std::vector<float> rgb;   // [H,W,3] — the same values as Trainer::render
+    std::vector<float> depth; // [H,W] expected depth in metres, 0 below kDepthMinAlpha
 };
 
 // The D7 assembly of one training step (I=C=1, B=1, PINHOLE; calc_compensations = cfg.antialiased
@@ -391,7 +405,11 @@ public:
     // iter is 0-based.
     // With cfg.resident and backend support, this takes the resident step path (otherwise the
     // previous host round-trip D7 assembly).
-    TrainStepResult step(const TrainingCamera& cam, const float* gt_rgb, int iter);
+    // depth: the view's LiDAR target — it supervises the step only when cfg.depth_weight > 0.
+    TrainStepResult step(const TrainingCamera& cam, const float* gt_rgb, int iter,
+                         const DepthTarget* depth = nullptr);
+    // Forward-only render with the expected depth (full sh_degree).
+    DepthRender render_with_depth(const TrainingCamera& cam);
     // Forward-only render (eval/preview — full sh_degree). Returns [H,W,3].
     // When resident is active it uses the resident forward — the same kernel and activation path as
     // the forward of step() (preserving bit-exact consistency for a self-rendered GT).
@@ -459,7 +477,8 @@ public:
                     // cpp helpers reference it)
 
 private:
-    Forward forward_pass(const TrainingCamera& cam, uint32_t degrees_to_use);
+    Forward forward_pass(const TrainingCamera& cam, uint32_t degrees_to_use,
+                         bool with_depth = false);
     void adam_step(std::vector<float>& param, const std::vector<float>& grad, AdamState& st,
                    const uint8_t* valid, float lr);
     void mcmc_relocate(McmcRefineResult& out);
@@ -483,7 +502,8 @@ private:
     void sync_host_from_device();   // lazy download (for reading — Home is unchanged)
     void sync_host_for_mutation();  // download + move Home to host (required before mutating)
     ResidentParamSync make_sync(int64_t rows); // pointer view of the 6 parameter/moment groups
-    TrainStepResult step_resident(const TrainingCamera& cam, const float* gt_rgb, int iter);
+    TrainStepResult step_resident(const TrainingCamera& cam, const float* gt_rgb, int iter,
+                                  const DepthTarget* depth);
 
     KernelBackend& backend_;
     SplatCloud cloud_; // with mcmc.enabled, a cap_max fixed arena (count = alive, the vectors

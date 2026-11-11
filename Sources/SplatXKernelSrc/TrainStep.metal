@@ -154,6 +154,41 @@ kernel void train_l1_grad(
     out[i] = P.has_dssim ? (P.w_l1 * base + v_dssim[i]) : base;
 }
 
+// Inverse-depth L1 gradient over the expected depth ED = acc/α (reproduces the host
+// depth_loss_and_grad, the single source of truth for the formula): with r = 1/ED − 1/gt,
+//   v_acc = g·sign(r)·(−1/ED²)/α,   v_α = −v_acc·ED.
+// Pixels whose sidecar sample is 0 (no LiDAR or below the confidence floor), whose α is below
+// kDepthMinAlpha or whose ED is below kDepthMinZ write 0 to both outputs.
+kernel void train_depth_grad(
+    device const float* render_depths   [[buffer(0)]], // [H,W] Σ w·z
+    device const float* render_alphas   [[buffer(1)]], // [H,W]
+    device const float* gt_depth        [[buffer(2)]], // [dh,dw] metres, 0 = invalid
+    device float*       v_render_depths [[buffer(3)]], // [H,W]
+    device float*       v_render_alphas [[buffer(4)]], // [H,W]
+    constant TrainDepthGradParams& P [[buffer(5)]],
+    uint i [[thread_position_in_grid]])
+{
+    if (i >= P.width * P.height) return;
+    const uint x  = i % P.width;
+    const uint y  = i / P.width;
+    const uint sx = sx_depth_sidecar_coord(x, P.width, P.depth_width);
+    const uint sy = sx_depth_sidecar_coord(y, P.height, P.depth_height);
+    const float gt = gt_depth[sy * P.depth_width + sx];
+    const float a  = render_alphas[i];
+    float v_acc = 0.0f, v_a = 0.0f;
+    if (gt > 0.0f && a >= kDepthMinAlpha) {
+        const float ed = render_depths[i] / a;
+        if (ed >= kDepthMinZ) {
+            const float r = 1.0f / ed - 1.0f / gt;
+            const float s = r > 0.0f ? 1.0f : (r < 0.0f ? -1.0f : 0.0f);
+            v_acc = P.g * s * (-1.0f / (ed * ed)) / a;
+            v_a   = -v_acc * ed;
+        }
+    }
+    v_render_depths[i] = v_acc;
+    v_render_alphas[i] = v_a;
+}
+
 // relu_mask multiply — blocks the gradient of channels where the clamp fired (host: if (!mask[i]) v[i] = 0).
 kernel void train_relu_mask_apply(
     device float*       v_colors [[buffer(0)]], // [N,3] in-place

@@ -193,6 +193,9 @@ typedef struct SxTrainProgress {
     int64_t n_isects;
     int64_t splat_count;   // the current N (a lightweight observation — no download)
     int32_t thermal_state; // the governor's current state 0..3 (the last injected value)
+    // ---- Depth supervision extension (at the end of the struct — existing offsets unchanged) ----
+    float depth_rmse;      // held-out expected-depth RMSE (m) on an eval tick when test views have
+                           // depth sidecars, else NaN (DepthSupervision.h convention)
 } SxTrainProgress;
 
 // Called synchronously on the training-loop thread — a slow callback delays training by exactly
@@ -276,6 +279,11 @@ typedef struct SxTrainStats {
     // an interrupted run).
     float final_ssim;
     float final_cc_ssim;
+    // ---- Depth supervision extension (at the end of the struct — existing offsets unchanged) ----
+    // Expected-depth RMSE (metres) of the final eval, pooled over the held-out views' valid sidecar
+    // samples (DepthSupervision.h mask). NaN when it did not run or no test view has a sidecar —
+    // reported for every run with sidecars, depth-supervised or not.
+    float final_depth_rmse;
 } SxTrainStats;
 
 // All of the sx_train_run arguments plus the Task 5 extensions. **Zero/NULL-initialize first**,
@@ -372,6 +380,11 @@ typedef struct SxTrainArgs {
     SxSnapshotFn snapshot_cb;         // NULL = off
     void* snapshot_user;              // passed through to snapshot_cb unchanged
     int32_t snapshot_every;           // <= 0 = off (the app uses 50)
+    // ---- Depth supervision extension (at the end of the struct — zero-init means off) ----
+    // Weight of the confidence-masked inverse-depth L1 over the expected depth, applied on train
+    // views that have a depth sidecar (depths/<stem>.png beside images/; DepthSupervision.h).
+    // 0 = off (RGB-only training, unchanged). Must be finite and >= 0.
+    float depth_weight;
 } SxTrainArgs;
 
 // The struct-argument entry point itself — the return/error contract is identical to sx_train_run
