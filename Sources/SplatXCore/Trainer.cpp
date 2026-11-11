@@ -995,7 +995,7 @@ void Trainer::sync_host_for_mutation() {
 TrainStepResult Trainer::step_resident(const TrainingCamera& cam, const float* gt_rgb, int iter,
                                        const DepthTarget* depth, const RegionMask* mask,
                                        int64_t mask_count, int64_t mask_ssim_count,
-                                       int64_t depth_valid) {
+                                       int64_t depth_valid, bool want_loss) {
     if (cam.width < 1 || cam.height < 1)
         throw std::invalid_argument("Trainer: camera width/height must be positive");
     if (!device_authoritative_) resident_upload();
@@ -1022,6 +1022,7 @@ TrainStepResult Trainer::step_resident(const TrainingCamera& cam, const float* g
     in.scale_reg_w = cfg_.scale_reg > 0.0f
                          ? cfg_.scale_reg / static_cast<float>(cloud_.count * 3)
                          : 0.0f;
+    in.want_loss = want_loss;
     in.want_render = true; // upholds the TrainStepResult.render_colors contract (the input for --save-preview)
     if (depth) {
         in.gt_depth = depth->depth_m.data();
@@ -1055,10 +1056,15 @@ TrainStepResult Trainer::step_resident(const TrainingCamera& cam, const float* g
     host_fresh_ = false; // adam (+noise) updated the device parameters — the mirror is stale
 
     TrainStepResult r;
-    r.loss = ro.loss;
+    if (want_loss) {
+        last_loss_ = ro.loss;
+        last_depth_loss_ = ro.depth_loss;
+    }
+    r.loss = last_loss_;
+    r.depth_loss = last_depth_loss_;
+    r.loss_fresh = want_loss;
     r.n_isects = ro.n_isects;
     r.render_colors = std::move(ro.render_colors);
-    r.depth_loss = ro.depth_loss;
     if (refine_due) {
         // Refine step: reuses the host orchestration — mcmc_refine()/mcmc_inject_noise() reclaim the
         // parameters and moments through sync_host_for_mutation() and move Home to the host.
@@ -1072,7 +1078,8 @@ TrainStepResult Trainer::step_resident(const TrainingCamera& cam, const float* g
 }
 
 TrainStepResult Trainer::step(const TrainingCamera& cam, const float* gt_rgb, int iter,
-                              const DepthTarget* depth, const RegionMask* mask) {
+                              const DepthTarget* depth, const RegionMask* mask,
+                              bool want_loss) {
     if (!gt_rgb) throw std::invalid_argument("Trainer::step: null gt_rgb");
     if (depth && depth->empty()) depth = nullptr;
     if (cfg_.depth_weight <= 0.0f) depth = nullptr; // off — the RGB-only step, unchanged
@@ -1091,7 +1098,8 @@ TrainStepResult Trainer::step(const TrainingCamera& cam, const float* gt_rgb, in
                                         : depth_valid_count(*depth, cam.width, cam.height, mask))
               : 0;
     if (resident_ready())
-        return step_resident(cam, gt_rgb, iter, depth, mask, mask_count, mask_ssim, depth_valid);
+        return step_resident(cam, gt_rgb, iter, depth, mask, mask_count, mask_ssim, depth_valid,
+                             want_loss);
     const int64_t N = cloud_.count;
     const bool use_depth = depth && depth_valid > 0;
 
@@ -1280,6 +1288,8 @@ TrainStepResult Trainer::step(const TrainingCamera& cam, const float* gt_rgb, in
     r.n_isects = f.isect.n_isects;
     r.render_colors = std::move(f.raster.render_colors);
     r.depth_loss = dl.loss;
+    last_loss_ = r.loss;
+    last_depth_loss_ = r.depth_loss;
     return r;
 }
 

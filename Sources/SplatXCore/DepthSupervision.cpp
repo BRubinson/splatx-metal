@@ -65,13 +65,20 @@ float depth_l1_loss(const float* acc, const float* alpha, const float* gt, int v
                     int depth_w, int depth_h, int64_t n_valid, const RegionMask* mask) {
     if (n_valid <= 0) return 0.0f;
     if (mask && mask->empty()) mask = nullptr;
+    const SidecarIndex dix = make_sidecar_index(depth_w, depth_h, view_w, view_h);
+    SidecarIndex scratch;
+    const SidecarIndex* mix = mask ? &mask_index(*mask, view_w, view_h, scratch) : nullptr;
+    const uint32_t* dcol = dix.col.data();
+    const uint32_t* mcol = mix ? mix->col.data() : nullptr;
     double sum = 0.0;
     for (int y = 0; y < view_h; y++) {
+        const float* grow = gt + dix.row[static_cast<size_t>(y)];
+        const float* mrow = mix ? mask->m.data() + mix->row[static_cast<size_t>(y)] : nullptr;
         for (int x = 0; x < view_w; x++) {
             const size_t i = static_cast<size_t>(y) * view_w + x;
-            const float g = sidecar_sample(gt, x, y, view_w, view_h, depth_w, depth_h);
+            const float g = grow[dcol[x]];
             if (!(g > 0.0f) || !(alpha[i] >= kDepthMinAlpha)) continue;
-            if (outside(mask, x, y, view_w, view_h)) continue;
+            if (mrow && !(mrow[mcol[x]] > 0.0f)) continue;
             const float ed = acc[i] / alpha[i];
             if (!(ed >= kDepthMinZ)) continue;
             sum += std::fabs(static_cast<double>(1.0f / ed - 1.0f / g));

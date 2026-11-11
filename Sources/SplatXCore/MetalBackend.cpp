@@ -2381,18 +2381,11 @@ public:
         ResidentStepOutputs out;
         out.n_isects = n_isects;
         const float* render = static_cast<const float*>(render_colors_->contents());
-        if (!in.forward_only && use_mask) {
+        const bool report_loss = !in.forward_only && in.want_loss;
+        if (report_loss && use_mask) {
             // The masked means (RegionMask.h) — the same f64 policy as the unmasked branch below.
-            double acc = 0.0;
-            for (uint32_t y = 0; y < H; y++)
-                for (uint32_t x = 0; x < W; x++) {
-                    if (!(in.mask->at(static_cast<int>(x), static_cast<int>(y),
-                                      static_cast<int>(W), static_cast<int>(H)) > 0.0f))
-                        continue;
-                    const std::size_t p = (static_cast<std::size_t>(y) * W + x) * 3;
-                    for (std::size_t c = 0; c < 3; c++)
-                        acc += std::fabs(static_cast<double>(render[p + c] - in.gt_rgb[p + c]));
-                }
+            const double acc = masked_l1_sum(render, in.gt_rgb, *in.mask, static_cast<int>(W),
+                                             static_cast<int>(H));
             const float l1_loss =
                 in.mask_count > 0
                     ? static_cast<float>(acc / static_cast<double>(3 * in.mask_count))
@@ -2406,7 +2399,7 @@ public:
             } else {
                 out.loss = use_ssim ? (1.0f - d_.ssim_weight) * l1_loss : l1_loss;
             }
-        } else if (!in.forward_only) {
+        } else if (report_loss) {
             const float* loss_src = render;
             double acc = 0.0;
             for (std::size_t i = 0; i < n_px; i++) {
@@ -2427,7 +2420,7 @@ public:
         if (run_depth) {
             const float* acc = static_cast<const float*>(render_depths_->contents());
             const float* alpha = static_cast<const float*>(render_alphas_->contents());
-            if (use_depth_loss)
+            if (use_depth_loss && report_loss)
                 out.depth_loss = depth_l1_loss(acc, alpha, in.gt_depth, static_cast<int>(W),
                                                static_cast<int>(H), in.depth_width,
                                                in.depth_height, in.depth_valid,

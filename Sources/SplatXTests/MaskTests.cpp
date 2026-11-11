@@ -12,6 +12,7 @@
 #include "splatx/TrainingInput.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -557,4 +558,122 @@ SX_TEST(mask_png_round_trip_and_nearest_sampling) {
     std::printf("  [mask sidecar] 256x192 -> 1920x1440: %lld in-mask view pixels\n",
                 static_cast<long long>(want));
     fs::remove_all(root);
+}
+
+// A loss tick reports the full masked L1+SSIM of that step's render; a skipped step repeats the
+// last tick's loss and depth loss. The cached sidecar index reads the same mask values as the
+// uncached lookup, so the masked sums are bit-equal with and without it.
+SX_TEST(mask_tick_loss_matches_full_computation) {
+    KernelBackend& b = sxtest::shared_metal_backend();
+    const int w = 64, h = 48;
+    const TrainingCamera cam = make_camera(w, h, 60.0f);
+    RegionMask mask = make_mask(7, 5, 3);
+    cache_mask_counts(mask, w, h);
+    RegionMask plain = mask;
+    plain.index = SidecarIndex{};
+    bool index_ok = mask.index.matches(w, h) && !plain.index.matches(w, h);
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) index_ok &= mask.at(x, y, w, h) == plain.at_uncached(x, y, w, h);
+    SX_CHECK(index_ok);
+
+    std::vector<float> render, gt;
+    make_images(w, h, render, gt);
+    SX_CHECK(masked_l1_sum(render.data(), gt.data(), mask, w, h) ==
+             masked_l1_sum(render.data(), gt.data(), plain, w, h));
+    SsimInputs si;
+    si.img1 = render.data();
+    si.img2 = gt.data();
+    si.I = 1;
+    si.H = h;
+    si.W = w;
+    si.C = 3;
+    const SsimFwdOutputs so = b.ssim_fwd(si);
+    SX_CHECK(masked_ssim_mean(so.ssim_map.data(), mask, w, h, 3, mask.ssim_count) ==
+             masked_ssim_mean(so.ssim_map.data(), plain, w, h, 3, mask.ssim_count));
+
+    TrainConfig cfg;
+    cfg.total_iters = 100;
+    cfg.ssim_weight = 0.2f;
+    cfg.depth_weight = 0.5f;
+    cfg.lr_means = 2e-3f;
+    Trainer tr(b, make_grid_cloud(), cfg);
+    DepthTarget depth = make_depth(7, 5, 3.0f);
+    depth.view_valid = depth_valid_count(depth, w, h, &mask);
+    float tick_loss = -1.0f, tick_depth = -1.0f;
+    bool ticks_ok = true, skips_ok = true;
+    for (int it = 0; it < 6; it++) {
+        const bool tick = it % 3 == 0;
+        const TrainStepResult r = tr.step(cam, gt.data(), it, &depth, &mask, tick);
+        if (tick) {
+            const double full =
+                masked_l1_ssim(b, r.render_colors, gt, w, h, mask, cfg.ssim_weight, false).loss;
+            std::printf("  [tick loss] it %d: reported %.8f full %.8f | depth %.7f\n", it,
+                        static_cast<double>(r.loss), full, static_cast<double>(r.depth_loss));
+            SX_CHECK_NEAR(r.loss, full, 1e-6, 1e-7);
+            ticks_ok &= r.loss_fresh && r.loss > 0.0f && r.depth_loss > 0.0f;
+            tick_loss = r.loss;
+            tick_depth = r.depth_loss;
+        } else {
+            skips_ok &= !r.loss_fresh && r.loss == tick_loss && r.depth_loss == tick_depth;
+        }
+    }
+    SX_CHECK(ticks_ok);
+    SX_CHECK(skips_ok);
+
+    // Print-only: the per-step cost at the acceptance view size with and without the host loss, and
+    // the host loss as it was computed before the index (at_uncached per pixel).
+    const int bw = 1920, bh = 1440;
+    const TrainingCamera big = make_camera(bw, bh, 1600.0f);
+    RegionMask bm = make_mask(256, 192, 96);
+    cache_mask_counts(bm, bw, bh);
+    std::vector<float> br, bg;
+    make_images(bw, bh, br, bg);
+    Trainer tb(b, make_grid_cloud(), cfg);
+    const auto ms = [](auto t0) {
+        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
+            .count();
+    };
+    (void)tb.step(big, bg.data(), 0, nullptr, &bm, true);
+    double skip_ms = 0.0, tick_ms = 0.0, old_ms = 0.0;
+    const int reps = 3;
+    for (int k = 0; k < reps; k++) {
+        auto t0 = std::chrono::steady_clock::now();
+        (void)tb.step(big, bg.data(), 1 + 2 * k, nullptr, &bm, false);
+        skip_ms += ms(t0);
+        t0 = std::chrono::steady_clock::now();
+        (void)tb.step(big, bg.data(), 2 + 2 * k, nullptr, &bm, true);
+        tick_ms += ms(t0);
+    }
+    SsimInputs bsi;
+    bsi.img1 = br.data();
+    bsi.img2 = bg.data();
+    bsi.I = 1;
+    bsi.H = bh;
+    bsi.W = bw;
+    bsi.C = 3;
+    const SsimFwdOutputs bso = b.ssim_fwd(bsi);
+    const int half = static_cast<int>(kSsimWindowSize - 1) / 2;
+    const int map_w = bw - 2 * half, map_h = bh - 2 * half;
+    double sink = 0.0;
+    for (int k = 0; k < reps; k++) {
+        const auto t0 = std::chrono::steady_clock::now();
+        double acc = 0.0;
+        for (int y = 0; y < bh; y++)
+            for (int x = 0; x < bw; x++) {
+                if (!(bm.at_uncached(x, y, bw, bh) > 0.0f)) continue;
+                const size_t p = (static_cast<size_t>(y) * bw + x) * 3;
+                for (size_t c = 0; c < 3; c++) acc += std::fabs(static_cast<double>(br[p + c] - bg[p + c]));
+            }
+        for (int y = 0; y < map_h; y++)
+            for (int x = 0; x < map_w; x++) {
+                if (!(bm.at_uncached(x + half, y + half, bw, bh) > 0.0f)) continue;
+                const size_t base = (static_cast<size_t>(y) * map_w + x) * 3;
+                for (int c = 0; c < 3; c++) acc += static_cast<double>(bso.ssim_map[base + c]);
+            }
+        old_ms += ms(t0);
+        sink += acc;
+    }
+    std::printf("  [step cost %dx%d, masked, mean of %d] skipped-loss step %.1f ms, tick step %.1f ms; "
+                "host loss with per-pixel at_uncached %.1f ms (sink %.3g)\n",
+                bw, bh, reps, skip_ms / reps, tick_ms / reps, old_ms / reps, sink);
 }

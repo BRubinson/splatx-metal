@@ -382,6 +382,7 @@ struct ResidentStepInputs {
     // reg > 0, otherwise 0)
     float opacity_reg_w = 0.f, scale_reg_w = 0.f;
     bool forward_only = false;      // for render() — skips loss, bwd, and adam entirely
+    bool want_loss = true;          // false skips the host-side reported loss (loss and depth_loss stay 0)
     bool want_render = false;       // whether to read render_colors back
     // MCMC noise injection (false on refine steps, which are host-owned — Trainer decides)
     bool inject_noise = false;

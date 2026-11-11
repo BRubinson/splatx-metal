@@ -69,7 +69,7 @@ extension GpuTests {
         var failed: Int32 = 0
         let rc = sx_tests_run_prefix("mask_", nil, nil, &total, &failed)
         #expect(rc == 0)
-        #expect(total == 10)
+        #expect(total == 11)
         #expect(failed == 0)
     }
 

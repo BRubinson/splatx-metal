@@ -921,8 +921,14 @@ extern "C" int32_t sx_train_run_args(const SxTrainArgs* args, char* err_buf,
                 depth_weight > 0.0f ? load_depth(static_cast<size_t>(cam_idx)) : nullptr;
             const splatx::RegionMask* mask = load_mask(static_cast<size_t>(cam_idx));
 
+            // The reported loss is computed on the ticks that read it: the stdout log, the progress
+            // tick a consumer at the log_every cadence reads, eval ticks, and the first and last step.
+            const bool loss_tick = it == start_iter || it == run_until - 1 ||
+                                   it % log_every == 0 || (it + 1) % log_every == 0 ||
+                                   (eval_every > 0 && (it + 1) % eval_every == 0);
             const auto t_it = Clock::now();
-            const splatx::TrainStepResult r = trainer.step(cam, gt.rgb.data(), it, depth, mask);
+            const splatx::TrainStepResult r =
+                trainer.step(cam, gt.rgb.data(), it, depth, mask, loss_tick);
             const double step_ms = ms_since(t_it);
 
             if (it == start_iter) first_loss = r.loss;

@@ -379,6 +379,8 @@ struct TrainStepResult {
     // The unweighted inverse-depth L1 of this step (0 when the step was not depth-supervised) —
     // reported beside, never inside, loss.
     float depth_loss = 0.0f;
+    // False when loss and depth_loss repeat an earlier step's (step(..., want_loss = false)).
+    bool loss_fresh = true;
 };
 
 // A forward render with the expected-depth channel (eval of the held-out depth error).
@@ -434,8 +436,11 @@ public:
     // depth: the view's LiDAR target — it supervises the step only when cfg.depth_weight > 0.
     // mask: the view's region mask (RegionMask.h) — it masks the L1, SSIM and depth terms; its
     // view_count/ssim_count are used when >= 0, else computed. nullptr = unmasked.
+    // want_loss = false lets the resident path skip the host-side reported loss; the result then
+    // repeats the last computed loss and depth_loss (loss_fresh false). The gradient is unaffected.
     TrainStepResult step(const TrainingCamera& cam, const float* gt_rgb, int iter,
-                         const DepthTarget* depth = nullptr, const RegionMask* mask = nullptr);
+                         const DepthTarget* depth = nullptr, const RegionMask* mask = nullptr,
+                         bool want_loss = true);
     // Forward-only render with the expected depth (full sh_degree).
     DepthRender render_with_depth(const TrainingCamera& cam);
     // Forward-only render (eval/preview — full sh_degree). Returns [H,W,3].
@@ -533,7 +538,7 @@ private:
     TrainStepResult step_resident(const TrainingCamera& cam, const float* gt_rgb, int iter,
                                   const DepthTarget* depth, const RegionMask* mask,
                                   int64_t mask_count, int64_t mask_ssim_count,
-                                  int64_t depth_valid);
+                                  int64_t depth_valid, bool want_loss);
 
     KernelBackend& backend_;
     SplatCloud cloud_; // with mcmc.enabled, a cap_max fixed arena (count = alive, the vectors
@@ -543,6 +548,7 @@ private:
                              //  initial count)
     AdamState means_st_, quats_st_, scales_st_, opac_st_, sh0_st_, shN_st_;
     std::mt19937_64 mcmc_rng_;  // multinomial only (the perturb noise is Philox — backend-owned)
+    float last_loss_ = 0.0f, last_depth_loss_ = 0.0f; // repeated by a want_loss = false step
     std::vector<float> binoms_; // [51·51] Eq.9 LUT (precomputed when mcmc.enabled)
 
     // device-resident state (used only when cfg_.resident && the backend supports it)

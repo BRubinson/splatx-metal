@@ -187,7 +187,9 @@ typedef struct SxTrainProgress {
     int32_t run_until;     // the ending iteration of this run (reflects an extended resume)
     int32_t total_iters;   // the ratio-schedule denominator (can be smaller than run_until on an
                            // extended resume)
-    float loss;            // the loss reported for this step ((1-λ)L1 + λ(1-SSIM))
+    float loss;            // the loss reported for this step ((1-λ)L1 + λ(1-SSIM)); computed when
+                           // iter % log_every is 0 or 1, on eval ticks and on the first and last
+                           // step, else the last computed value
     float psnr;            // mean PSNR(dB) if an eval_every evaluation ran on this tick, else NaN
     double step_ms;        // duration of this step (ms)
     int64_t n_isects;
