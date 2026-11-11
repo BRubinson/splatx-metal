@@ -344,6 +344,54 @@ L1LossResult l1_loss_and_grad(const float* render, const float* gt, int64_t n_el
     return out;
 }
 
+L1LossResult l1_loss_and_grad_masked(const float* render, const float* gt, int view_w, int view_h,
+                                     const RegionMask& mask, int64_t mask_count) {
+    if (!render || !gt || view_w < 1 || view_h < 1 || mask.empty())
+        throw std::invalid_argument("l1_loss_and_grad_masked: null buffers, empty view or mask");
+    L1LossResult out;
+    const int64_t n_elems = static_cast<int64_t>(view_w) * view_h * 3;
+    out.v_render_colors.assign(static_cast<size_t>(n_elems), 0.0f);
+    if (mask_count <= 0) return out;
+    const float g = 1.0f / static_cast<float>(3 * mask_count);
+    double acc = 0.0;
+    for (int y = 0; y < view_h; y++) {
+        for (int x = 0; x < view_w; x++) {
+            const float m = mask.at(x, y, view_w, view_h);
+            if (!(m > 0.0f)) continue;
+            const size_t p = (static_cast<size_t>(y) * view_w + x) * 3;
+            for (size_t c = 0; c < 3; c++) {
+                const float d = render[p + c] - gt[p + c];
+                acc += std::fabs(static_cast<double>(d));
+                out.v_render_colors[p + c] = (d > 0.0f ? g : (d < 0.0f ? -g : 0.0f)) * m;
+            }
+        }
+    }
+    out.loss = static_cast<float>(acc / static_cast<double>(3 * mask_count));
+    return out;
+}
+
+float psnr_masked(const float* a, const float* b, int view_w, int view_h, const RegionMask& mask) {
+    if (!a || !b || view_w < 1 || view_h < 1 || mask.empty())
+        throw std::invalid_argument("psnr_masked: null buffers, empty view or mask");
+    double acc = 0.0;
+    int64_t n = 0;
+    for (int y = 0; y < view_h; y++) {
+        for (int x = 0; x < view_w; x++) {
+            if (!(mask.at(x, y, view_w, view_h) > 0.0f)) continue;
+            const size_t p = (static_cast<size_t>(y) * view_w + x) * 3;
+            for (size_t c = 0; c < 3; c++) {
+                const double d = static_cast<double>(a[p + c]) - static_cast<double>(b[p + c]);
+                acc += d * d;
+            }
+            n += 3;
+        }
+    }
+    if (n == 0) return std::numeric_limits<float>::quiet_NaN();
+    const double mse = acc / static_cast<double>(n);
+    if (mse <= 0.0) return std::numeric_limits<float>::infinity();
+    return static_cast<float>(10.0 * std::log10(1.0 / mse));
+}
+
 // ===== PSNR + split (Phase 2 Task 5 — the basis for the definitions is the Trainer.h comment) =====
 
 float psnr(const float* a, const float* b, int64_t n_elems) {
@@ -558,6 +606,27 @@ void add_scale_reg_grad_inplace(std::vector<float>& v_scales, const float* scale
     for (size_t i = 0; i < v_scales.size(); i++) v_scales[i] += w * scales_lin[i];
 }
 
+void add_shape_reg_grad_inplace(std::vector<float>& v_scales, const float* scales_lin,
+                                float flatten_w, float needle_w, float needle_ratio) {
+    if (!(flatten_w > 0.0f) && !(needle_w > 0.0f)) return;
+    const size_t n = v_scales.size() / 3;
+    for (size_t g = 0; g < n; g++) {
+        const float s[3] = {scales_lin[g * 3], scales_lin[g * 3 + 1], scales_lin[g * 3 + 2]};
+        size_t i1 = 0, i2 = 1, i3 = 2; // s[i1] ≥ s[i2] ≥ s[i3], ties keep axis order
+        if (s[i1] < s[i2]) std::swap(i1, i2);
+        if (s[i2] < s[i3]) std::swap(i2, i3);
+        if (s[i1] < s[i2]) std::swap(i1, i2);
+        if (flatten_w > 0.0f) v_scales[g * 3 + i3] += flatten_w * s[i3];
+        if (needle_w > 0.0f && s[i2] > 0.0f) {
+            const float r = s[i1] / s[i2];
+            if (r > needle_ratio) {
+                v_scales[g * 3 + i1] += needle_w * r;
+                v_scales[g * 3 + i2] -= needle_w * r;
+            }
+        }
+    }
+}
+
 // MCMC presets (the "mcmc" config in gsplat examples/simple_trainer.py:1579–1587):
 // reproduces Config(init_opa=0.5, init_scale=0.1, opacity_reg=0.01, scale_reg=0.01,
 // strategy=MCMCStrategy(...)). No other field is touched.
@@ -676,6 +745,12 @@ Trainer::Trainer(KernelBackend& backend, SplatCloud cloud, const TrainConfig& cf
         throw std::invalid_argument("Trainer: ssim_weight must be in [0,1]");
     if (!(cfg_.depth_weight >= 0.0f && std::isfinite(cfg_.depth_weight)))
         throw std::invalid_argument("Trainer: depth_weight must be finite and >= 0");
+    if (!(cfg_.flatten_weight >= 0.0f && std::isfinite(cfg_.flatten_weight)))
+        throw std::invalid_argument("Trainer: flatten_weight must be finite and >= 0");
+    if (!(cfg_.needle_weight >= 0.0f && std::isfinite(cfg_.needle_weight)))
+        throw std::invalid_argument("Trainer: needle_weight must be finite and >= 0");
+    if (!(cfg_.needle_ratio >= 1.0f && std::isfinite(cfg_.needle_ratio)))
+        throw std::invalid_argument("Trainer: needle_ratio must be finite and >= 1");
     arena_rows_ = cloud_.count; // mcmc off — the same fixed N as 1c
     if (!cfg_.mcmc.enabled) return;
 
@@ -918,7 +993,9 @@ void Trainer::sync_host_for_mutation() {
 }
 
 TrainStepResult Trainer::step_resident(const TrainingCamera& cam, const float* gt_rgb, int iter,
-                                       const DepthTarget* depth) {
+                                       const DepthTarget* depth, const RegionMask* mask,
+                                       int64_t mask_count, int64_t mask_ssim_count,
+                                       int64_t depth_valid) {
     if (cam.width < 1 || cam.height < 1)
         throw std::invalid_argument("Trainer: camera width/height must be positive");
     if (!device_authoritative_) resident_upload();
@@ -950,10 +1027,22 @@ TrainStepResult Trainer::step_resident(const TrainingCamera& cam, const float* g
         in.gt_depth = depth->depth_m.data();
         in.depth_width = depth->width;
         in.depth_height = depth->height;
-        in.depth_valid = depth->view_valid >= 0 ? depth->view_valid
-                                                : depth_valid_count(*depth, cam.width, cam.height);
+        in.depth_valid = depth_valid;
         in.depth_weight = cfg_.depth_weight;
     }
+    if (mask) {
+        in.mask = mask;
+        in.mask_count = mask_count;
+        in.mask_ssim_count = mask_ssim_count;
+    }
+    // Shape regulariser — the w expression of add_shape_reg_grad_inplace (weight/N, 0 = off)
+    in.flatten_w = cfg_.flatten_weight > 0.0f
+                       ? cfg_.flatten_weight / static_cast<float>(cloud_.count)
+                       : 0.0f;
+    in.needle_w = cfg_.needle_weight > 0.0f
+                      ? cfg_.needle_weight / static_cast<float>(cloud_.count)
+                      : 0.0f;
+    in.needle_ratio = cfg_.needle_ratio;
     const bool refine_due = cfg_.mcmc.enabled && mcmc_refine_due(iter);
     if (cfg_.mcmc.enabled && !refine_due) {
         in.inject_noise = true;
@@ -983,16 +1072,27 @@ TrainStepResult Trainer::step_resident(const TrainingCamera& cam, const float* g
 }
 
 TrainStepResult Trainer::step(const TrainingCamera& cam, const float* gt_rgb, int iter,
-                              const DepthTarget* depth) {
+                              const DepthTarget* depth, const RegionMask* mask) {
     if (!gt_rgb) throw std::invalid_argument("Trainer::step: null gt_rgb");
     if (depth && depth->empty()) depth = nullptr;
     if (cfg_.depth_weight <= 0.0f) depth = nullptr; // off — the RGB-only step, unchanged
-    if (resident_ready()) return step_resident(cam, gt_rgb, iter, depth);
-    const int64_t N = cloud_.count;
+    if (mask && mask->empty()) mask = nullptr;      // no mask — the unmasked step, unchanged
+    if (mask && depth) check_mask_matches_depth(*mask, *depth);
+    const int64_t mask_count =
+        mask ? (mask->view_count >= 0 ? mask->view_count
+                                      : mask_view_count(*mask, cam.width, cam.height))
+             : 0;
+    const int64_t mask_ssim =
+        mask ? (mask->ssim_count >= 0 ? mask->ssim_count
+                                      : mask_ssim_count(*mask, cam.width, cam.height))
+             : 0;
     const int64_t depth_valid =
         depth ? (depth->view_valid >= 0 ? depth->view_valid
-                                        : depth_valid_count(*depth, cam.width, cam.height))
+                                        : depth_valid_count(*depth, cam.width, cam.height, mask))
               : 0;
+    if (resident_ready())
+        return step_resident(cam, gt_rgb, iter, depth, mask, mask_count, mask_ssim, depth_valid);
+    const int64_t N = cloud_.count;
     const bool use_depth = depth && depth_valid > 0;
 
     Forward f = forward_pass(cam, sh_degree_at(cfg_, iter, cloud_.sh_degree), use_depth);
@@ -1001,7 +1101,9 @@ TrainStepResult Trainer::step(const TrainingCamera& cam, const float* gt_rgb, in
 
     // (host) L1 loss + upstream grad. v_render_alphas is a zero buffer (neither L1 nor SSIM uses alpha).
     const int64_t hw = static_cast<int64_t>(cam.width) * cam.height;
-    L1LossResult l1 = l1_loss_and_grad(loss_img, gt_rgb, hw * 3);
+    L1LossResult l1 = mask ? l1_loss_and_grad_masked(loss_img, gt_rgb, cam.width, cam.height,
+                                                     *mask, mask_count)
+                           : l1_loss_and_grad(loss_img, gt_rgb, hw * 3);
     float loss = l1.loss;
 
     // (kernel + host) Combines the SSIM loss (Phase 3 Task 3 — reproducing gsplat
@@ -1025,17 +1127,29 @@ TrainStepResult Trainer::step(const TrainingCamera& cam, const float* gt_rgb, in
         si.W = cam.width;
         si.C = 3;
         si.need_coeffs = true; // training mode — also outputs the 3 coefficient maps (Dμ/Dσ/Dc) that bwd takes as input
-        const SsimFwdOutputs so = backend_.ssim_fwd(si); // H/W < 11 makes the validator throw
+        SsimFwdOutputs so = backend_.ssim_fwd(si); // H/W < 11 makes the validator throw
+        double ssim = so.ssim;
+        float v_loss = lam; // upstream d(total)/d(1-ssim) = λ
+        if (mask) {
+            // Masked: dL/dS(q) × m(centre), and ssim_bwd's G = -v_loss/map_count becomes -λ/(3·Ms).
+            mask_ssim_coeffs_inplace(so.coeff_mu.data(), so.coeff_sigma.data(),
+                                     so.coeff_cross.data(), *mask, cam.width, cam.height, 3);
+            const double map_count = static_cast<double>(so.ssim_map.size());
+            v_loss = mask_ssim > 0 ? static_cast<float>(static_cast<double>(lam) * map_count /
+                                                        (3.0 * static_cast<double>(mask_ssim)))
+                                   : 0.0f;
+            ssim = masked_ssim_mean(so.ssim_map.data(), *mask, cam.width, cam.height, 3, mask_ssim);
+        }
         SsimGradsIn sgi;
         sgi.coeff_mu = so.coeff_mu.data();
         sgi.coeff_sigma = so.coeff_sigma.data();
         sgi.coeff_cross = so.coeff_cross.data();
-        sgi.v_loss = lam; // upstream d(total)/d(1-ssim) = λ
+        sgi.v_loss = v_loss;
         const std::vector<float> v_dssim = backend_.ssim_bwd(si, sgi);
         const float w_l1 = 1.0f - lam;
         for (size_t i = 0; i < l1.v_render_colors.size(); i++)
             l1.v_render_colors[i] = w_l1 * l1.v_render_colors[i] + v_dssim[i];
-        loss = w_l1 * l1.loss + lam * (1.0f - static_cast<float>(so.ssim));
+        loss = w_l1 * l1.loss + lam * (1.0f - static_cast<float>(ssim));
     }
     std::vector<float> v_render_alphas(static_cast<size_t>(hw), 0.0f);
     // Depth supervision: the inverse-depth L1 over the expected depth enters through the Σwz
@@ -1043,7 +1157,8 @@ TrainStepResult Trainer::step(const TrainingCamera& cam, const float* gt_rgb, in
     DepthLossResult dl;
     if (use_depth) {
         dl = depth_loss_and_grad(f.raster.render_depths.data(), f.raster.render_alphas.data(),
-                                 *depth, cam.width, cam.height, depth_valid, cfg_.depth_weight);
+                                 *depth, cam.width, cam.height, depth_valid, cfg_.depth_weight,
+                                 mask);
         v_render_alphas = dl.v_render_alphas;
     }
 
@@ -1115,6 +1230,11 @@ TrainStepResult Trainer::step(const TrainingCamera& cam, const float* gt_rgb, in
     // as a training signal (gradients) (the Phase 2 Task 4 decision stands).
     add_opacity_reg_grad_inplace(rg.v_opacities, f.opacs_act.data(), cfg_.opacity_reg);
     add_scale_reg_grad_inplace(pg.v_scales, f.scales_lin.data(), cfg_.scale_reg);
+    add_shape_reg_grad_inplace(
+        pg.v_scales, f.scales_lin.data(),
+        cfg_.flatten_weight > 0.0f ? cfg_.flatten_weight / static_cast<float>(N) : 0.0f,
+        cfg_.needle_weight > 0.0f ? cfg_.needle_weight / static_cast<float>(N) : 0.0f,
+        cfg_.needle_ratio);
 
     // (host) Splits v_coeffs [N,K,3] → v_sh0 [N,3] / v_shN [N,K-1,3] (the inverse of the coeffs assembly)
     std::vector<float> v_sh0(static_cast<size_t>(N) * 3);
@@ -1521,6 +1641,10 @@ CheckpointConfig Trainer::checkpoint_config(int factor, int test_split) const {
     c.mcmc_seed = cfg_.mcmc.enabled ? cfg_.mcmc.seed : 0;
     c.scene_scale = cfg_.scene_scale;
     c.ssim_weight = cfg_.ssim_weight;
+    c.flatten_weight = cfg_.flatten_weight;
+    c.needle_weight = cfg_.needle_weight;
+    c.needle_ratio = cfg_.needle_ratio;
+    c.has_mask = cfg_.has_mask ? 1 : 0;
     return c;
 }
 

@@ -3,6 +3,7 @@
 // Reimplemented for Metal/C++.
 #include "splatx/MetalBackend.h"
 #include "splatx/DepthSupervision.h"
+#include "splatx/RegionMask.h"
 #include "splatx/Validate.h" // shared single source of truth for entry validation (throws as the CPU reference does)
 
 #include <Foundation/Foundation.hpp>
@@ -1749,6 +1750,14 @@ public:
         const bool use_depth_loss = !in.forward_only && in.gt_depth && in.depth_weight > 0.0f &&
                                     in.depth_valid > 0;
         const bool run_depth = use_depth_loss || in.want_depth;
+        const bool use_mask = !in.forward_only && in.mask != nullptr && !in.mask->empty();
+        if (use_mask && (in.mask->width < 1 || in.mask->height < 1 ||
+                         in.mask->m.size() != static_cast<std::size_t>(in.mask->width) *
+                                                  static_cast<std::size_t>(in.mask->height)))
+            throw std::invalid_argument("TrainStepExecutor::step: mask needs positive dims");
+        if (use_mask && (in.mask_count < 0 || in.mask_ssim_count < 0))
+            throw std::invalid_argument("TrainStepExecutor::step: mask counts must be >= 0");
+        const bool use_shape_reg = !in.forward_only && (in.flatten_w > 0.0f || in.needle_w > 0.0f);
         if (use_ssim && (in.height < static_cast<int>(kSsimWindowSize) ||
                          in.width < static_cast<int>(kSsimWindowSize)))
             throw std::invalid_argument( // matches validate_ssim_inputs (the valid map would be empty)
@@ -1771,6 +1780,18 @@ public:
         if (use_depth_loss) {
             ensure_depth_capacity(depth_px);
             std::memcpy(gt_depth_->contents(), in.gt_depth, depth_px * sizeof(float));
+        }
+        TrainMaskParams MP{};
+        if (use_mask) {
+            const std::size_t mask_px = in.mask->m.size();
+            ensure_mask_capacity(mask_px);
+            std::memcpy(mask_->contents(), in.mask->m.data(), mask_px * sizeof(float));
+            MP.width = W;
+            MP.height = H;
+            MP.mask_width = static_cast<uint32_t>(in.mask->width);
+            MP.mask_height = static_cast<uint32_t>(in.mask->height);
+            MP.map_w = W >= kSsimWindowSize ? W - (kSsimWindowSize - 1) : 0;
+            MP.map_h = H >= kSsimWindowSize ? H - (kSsimWindowSize - 1) : 0;
         }
         std::memcpy(viewmat_buf_->contents(), in.viewmat, 16 * sizeof(float));
         std::memcpy(K_buf_->contents(), in.K, 9 * sizeof(float));
@@ -2069,9 +2090,23 @@ public:
                         MTL::Size::Make(kSsimTileSize, kSsimTileSize, 1));
                     enc->memoryBarrier(MTL::BarrierScopeBuffers);
                     seg_cut("res2_ssim_fwd");
-                    // ssim bwd — v_dssim (the kernel absorbs G = -λ/M; identical to MetalBackend::ssim_bwd)
-                    PS.G = static_cast<float>(-static_cast<double>(d_.ssim_weight) /
-                                              static_cast<double>(map_count));
+                    if (use_mask) { // masked dL/dS: coefficient maps × m(window centre)
+                        enc->setComputePipelineState(mb_.pipeline("train_ssim_mask_coeffs"));
+                        enc->setBuffer(c_mu_.get(), 0, 0);
+                        enc->setBuffer(c_sigma_.get(), 0, 1);
+                        enc->setBuffer(c_cross_.get(), 0, 2);
+                        enc->setBuffer(mask_.get(), 0, 3);
+                        enc->setBytes(&MP, sizeof(MP), 4);
+                        dispatch(enc, map_count);
+                    }
+                    // ssim bwd — v_dssim (the kernel absorbs G = -λ/M; identical to MetalBackend::ssim_bwd).
+                    // Masked: M = 3·Ms (0 in-mask map pixels → G = 0, no SSIM gradient).
+                    const double ssim_den = use_mask
+                                                ? 3.0 * static_cast<double>(in.mask_ssim_count)
+                                                : static_cast<double>(map_count);
+                    PS.G = ssim_den > 0.0 ? static_cast<float>(
+                                                -static_cast<double>(d_.ssim_weight) / ssim_den)
+                                          : 0.0f;
                     enc->setComputePipelineState(mb_.pipeline("ssim_bwd"));
                     enc->setBuffer(loss_img, 0, 0);
                     enc->setBuffer(gt_.get(), 0, 1);
@@ -2091,14 +2126,23 @@ public:
                     TrainL1GradParams P;
                     P.n = static_cast<uint32_t>(n_px);
                     P.has_dssim = use_ssim ? 1u : 0u;
-                    P.g = 1.0f / static_cast<float>(n_px); // the same f32 g as l1_loss_and_grad
+                    // the same f32 g as l1_loss_and_grad (masked: 1/(3M), 0 when M = 0)
+                    P.g = use_mask ? (in.mask_count > 0
+                                          ? 1.0f / static_cast<float>(3 * in.mask_count)
+                                          : 0.0f)
+                                   : 1.0f / static_cast<float>(n_px);
                     P.w_l1 = 1.0f - d_.ssim_weight;
-                    enc->setComputePipelineState(mb_.pipeline("train_l1_grad"));
+                    enc->setComputePipelineState(
+                        mb_.pipeline("train_l1_grad", {{kFCTrainHasMask, use_mask}}));
                     enc->setBuffer(loss_img, 0, 0);
                     enc->setBuffer(gt_.get(), 0, 1);
                     enc->setBuffer((use_ssim ? v_dssim_.get() : loss_img), 0, 2);
                     enc->setBuffer(v_render_.get(), 0, 3);
                     enc->setBytes(&P, sizeof(P), 4);
+                    if (use_mask) {
+                        enc->setBuffer(mask_.get(), 0, 5);
+                        enc->setBytes(&MP, sizeof(MP), 6);
+                    }
                     dispatch(enc, n_px);
                 }
                 if (use_depth_loss) {
@@ -2108,13 +2152,18 @@ public:
                     P.depth_width = static_cast<uint32_t>(in.depth_width);
                     P.depth_height = static_cast<uint32_t>(in.depth_height);
                     P.g = in.depth_weight / static_cast<float>(in.depth_valid);
-                    enc->setComputePipelineState(mb_.pipeline("train_depth_grad"));
+                    enc->setComputePipelineState(
+                        mb_.pipeline("train_depth_grad", {{kFCTrainHasMask, use_mask}}));
                     enc->setBuffer(render_depths_.get(), 0, 0);
                     enc->setBuffer(render_alphas_.get(), 0, 1);
                     enc->setBuffer(gt_depth_.get(), 0, 2);
                     enc->setBuffer(v_render_depths_.get(), 0, 3);
                     enc->setBuffer(v_render_alphas_.get(), 0, 4);
                     enc->setBytes(&P, sizeof(P), 5);
+                    if (use_mask) {
+                        enc->setBuffer(mask_.get(), 0, 6);
+                        enc->setBytes(&MP, sizeof(MP), 7);
+                    }
                     dispatch(enc, HW);
                 }
                 seg_cut("res2_loss_grad"); // train_l1_grad (+ the SSIM combination, + depth)
@@ -2233,6 +2282,14 @@ public:
                     enc->setBytes(&P, sizeof(P), 2);
                     dispatch(enc, static_cast<std::size_t>(N) * 3);
                 }
+                if (use_shape_reg) {
+                    TrainShapeRegParams P{N, in.flatten_w, in.needle_w, in.needle_ratio};
+                    enc->setComputePipelineState(mb_.pipeline("train_scale_shape_reg"));
+                    enc->setBuffer(v_scales_.get(), 0, 0);
+                    enc->setBuffer(scales_lin_.get(), 0, 1);
+                    enc->setBytes(&P, sizeof(P), 2);
+                    dispatch(enc, N);
+                }
                 {
                     TrainGradChainParams P{N, in.opacity_reg_w};
                     enc->setComputePipelineState(mb_.pipeline("train_opacity_grad_chain"));
@@ -2324,7 +2381,32 @@ public:
         ResidentStepOutputs out;
         out.n_isects = n_isects;
         const float* render = static_cast<const float*>(render_colors_->contents());
-        if (!in.forward_only) {
+        if (!in.forward_only && use_mask) {
+            // The masked means (RegionMask.h) — the same f64 policy as the unmasked branch below.
+            double acc = 0.0;
+            for (uint32_t y = 0; y < H; y++)
+                for (uint32_t x = 0; x < W; x++) {
+                    if (!(in.mask->at(static_cast<int>(x), static_cast<int>(y),
+                                      static_cast<int>(W), static_cast<int>(H)) > 0.0f))
+                        continue;
+                    const std::size_t p = (static_cast<std::size_t>(y) * W + x) * 3;
+                    for (std::size_t c = 0; c < 3; c++)
+                        acc += std::fabs(static_cast<double>(render[p + c] - in.gt_rgb[p + c]));
+                }
+            const float l1_loss =
+                in.mask_count > 0
+                    ? static_cast<float>(acc / static_cast<double>(3 * in.mask_count))
+                    : 0.0f;
+            if (use_ssim && in.mask_ssim_count > 0) {
+                const double ssim = masked_ssim_mean(
+                    static_cast<const float*>(ssim_map_->contents()), *in.mask,
+                    static_cast<int>(W), static_cast<int>(H), 3, in.mask_ssim_count);
+                out.loss = (1.0f - d_.ssim_weight) * l1_loss +
+                           d_.ssim_weight * (1.0f - static_cast<float>(ssim));
+            } else {
+                out.loss = use_ssim ? (1.0f - d_.ssim_weight) * l1_loss : l1_loss;
+            }
+        } else if (!in.forward_only) {
             const float* loss_src = render;
             double acc = 0.0;
             for (std::size_t i = 0; i < n_px; i++) {
@@ -2348,7 +2430,8 @@ public:
             if (use_depth_loss)
                 out.depth_loss = depth_l1_loss(acc, alpha, in.gt_depth, static_cast<int>(W),
                                                static_cast<int>(H), in.depth_width,
-                                               in.depth_height, in.depth_valid);
+                                               in.depth_height, in.depth_valid,
+                                               use_mask ? in.mask : nullptr);
             if (in.want_render || in.want_depth) {
                 out.render_depths.resize(HW);
                 for (std::size_t i = 0; i < HW; i++)
@@ -2525,6 +2608,12 @@ private:
         depth_cap_ = n;
     }
 
+    void ensure_mask_capacity(std::size_t n) {
+        if (n <= mask_cap_ && mask_) return;
+        mask_ = alloc(n * sizeof(float));
+        mask_cap_ = n;
+    }
+
     void sync_params(const ResidentParamSync& s, bool to_device) {
         if (s.rows < 1 || s.rows > d_.arena_rows)
             throw std::invalid_argument("TrainStepExecutor: sync rows out of [1, arena_rows]");
@@ -2566,10 +2655,10 @@ private:
     NS::SharedPtr<MTL::Buffer> keys_[2], vals_[2], counts_, reduced_;
     NS::SharedPtr<MTL::Buffer> gt_, render_colors_, render_alphas_, last_ids_, v_render_,
         v_render_alphas_zero_, offsets_, render_depths_, v_render_depths_, v_render_alphas_,
-        gt_depth_;
+        gt_depth_, mask_;
     NS::SharedPtr<MTL::Buffer> ssim_map_, c_mu_, c_sigma_, c_cross_, v_dssim_;
     std::size_t isect_cap_ = 0, image_cap_ = 0, ssim_cap_ = 0, tiles_cap_ = 0, depth_cap_ = 0,
-                depth_image_cap_ = 0;
+                depth_image_cap_ = 0, mask_cap_ = 0;
 };
 
 std::unique_ptr<TrainStepExecutor>

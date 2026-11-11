@@ -19,7 +19,8 @@ namespace splatx {
 namespace {
 
 constexpr char kMagic[4] = {'S', 'X', 'C', 'K'};
-constexpr uint32_t kVersion = 1;
+constexpr uint32_t kVersion = 2;   // written; version 1 (no shape-reg/mask fields) still loads
+constexpr uint32_t kVersionV1 = 1;
 constexpr uint32_t kFlagFp16 = 1u << 0;
 
 // Column count per group in D3 group order — shN is derived from sh_degree (the single source of
@@ -171,6 +172,15 @@ void verify_checkpoint_config(const CheckpointConfig& s, const CheckpointConfig&
         mismatch("ssim_weight", fstr(s.ssim_weight), fstr(c.ssim_weight));
     if (s.antialiased != c.antialiased)
         mismatch("antialiased", s.antialiased ? "on" : "off", c.antialiased ? "on" : "off");
+    if (s.flatten_weight != c.flatten_weight)
+        mismatch("flatten_weight", fstr(s.flatten_weight), fstr(c.flatten_weight));
+    if (s.needle_weight != c.needle_weight)
+        mismatch("needle_weight", fstr(s.needle_weight), fstr(c.needle_weight));
+    if (s.needle_ratio != c.needle_ratio)
+        mismatch("needle_ratio", fstr(s.needle_ratio), fstr(c.needle_ratio));
+    if (s.has_mask != c.has_mask)
+        mismatch("region mask", s.has_mask ? "on" : "off", c.has_mask ? "on" : "off",
+                 "the masked and unmasked losses train different objectives");
 }
 
 void save_checkpoint_file(const TrainerCheckpoint& ck, const std::string& path, bool fp16) {
@@ -216,6 +226,11 @@ void save_checkpoint_file(const TrainerCheckpoint& ck, const std::string& path, 
         write_pod<uint64_t>(f, ck.config.mcmc_seed);
         write_pod<float>(f, ck.config.scene_scale);
         write_pod<float>(f, ck.config.ssim_weight);
+        write_pod<float>(f, ck.config.flatten_weight);
+        write_pod<float>(f, ck.config.needle_weight);
+        write_pod<float>(f, ck.config.needle_ratio);
+        write_pod<uint8_t>(f, ck.config.has_mask ? 1 : 0);
+        for (int k = 0; k < 3; k++) write_pod<uint8_t>(f, 0); // padding (fixed 0)
         // state
         write_pod<int32_t>(f, ck.iter);
         write_pod<int64_t>(f, n);
@@ -277,9 +292,10 @@ CheckpointHeader read_header(std::FILE* f, const std::string& path) {
         throw std::runtime_error("checkpoint: bad magic (not a splatx checkpoint): " + path);
     CheckpointHeader h;
     h.version = read_pod<uint32_t>(f);
-    if (h.version != kVersion)
+    if (h.version != kVersion && h.version != kVersionV1)
         throw std::runtime_error("checkpoint: unsupported version " + std::to_string(h.version) +
-                                 " (expected " + std::to_string(kVersion) + ")");
+                                 " (expected " + std::to_string(kVersionV1) + " or " +
+                                 std::to_string(kVersion) + ")");
     const uint32_t flags = read_pod<uint32_t>(f);
     if (flags & ~kFlagFp16)
         throw std::runtime_error("checkpoint: unknown flags");
@@ -303,6 +319,15 @@ CheckpointHeader read_header(std::FILE* f, const std::string& path) {
     h.config.mcmc_seed = read_pod<uint64_t>(f);
     h.config.scene_scale = read_pod<float>(f);
     h.config.ssim_weight = read_pod<float>(f);
+    if (h.version >= 2) {
+        h.config.flatten_weight = read_pod<float>(f);
+        h.config.needle_weight = read_pod<float>(f);
+        h.config.needle_ratio = read_pod<float>(f);
+        const uint8_t has_mask = read_pod<uint8_t>(f);
+        if (has_mask > 1) throw std::runtime_error("checkpoint: invalid region mask flag");
+        h.config.has_mask = has_mask;
+        for (int k = 0; k < 3; k++) (void)read_pod<uint8_t>(f); // padding
+    }
     if (h.config.sh_degree < 0 || h.config.sh_degree > 3)
         throw std::runtime_error("checkpoint: sh_degree out of [0,3]");
 

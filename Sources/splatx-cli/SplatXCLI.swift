@@ -83,6 +83,18 @@ struct Train: ParsableCommand {
             help: "Depth supervision weight w ≥ 0 — loss += w·(confidence-masked inverse-depth L1 of the expected depth) on views with a depths/<stem>.png sidecar (16-bit mm; optional depths/<stem>.conf.png ARConfidenceLevel). 0=off")
     var depthWeight: Float = 0
 
+    @Option(name: .customLong("flatten-weight"),
+            help: "Shape regulariser w ≥ 0 — loss += (w/N)·Σ s_min over the Gaussians' linear scales (flattens them toward surface discs). 0=off. Region masks need no flag: masks/<stem>.png beside images/ (8-bit, nonzero = in-region) mask the L1, SSIM and depth losses")
+    var flattenWeight: Float = 0
+
+    @Option(name: .customLong("needle-weight"),
+            help: "Needle hinge w ≥ 0 — loss += (w/N)·Σ max(0, s_max/s_mid − ratio) (s_mid, never s_min, so a flattened disc pays nothing). 0=off")
+    var needleWeight: Float = 0
+
+    @Option(name: .customLong("needle-ratio"),
+            help: "The s_max/s_mid threshold of the needle hinge (≥ 1)")
+    var needleRatio: Float = 5
+
     @Flag(name: .long,
           help: "Anti-aliasing (Mip-Splatting 2D compensation) — trains with opacity multiplied by the projection compensation factor (reproduces gsplat rasterize_mode=antialiased; default off=classic — the published-benchmark condition. Standard PLY has no AA flag, so generic viewers render without compensation; .spz output records the antialiased flag in its header — see the README caveat)")
     var antialiased: Bool = false
@@ -143,6 +155,9 @@ struct Train: ParsableCommand {
                                 a.eval_every = Int32(evalEvery)
                                 a.ssim_weight = ssimWeight
                                 a.depth_weight = depthWeight
+                                a.flatten_weight = flattenWeight
+                                a.needle_weight = needleWeight
+                                a.needle_ratio = needleRatio
                                 a.antialiased = antialiased ? 1 : 0
                                 a.resident = noResident ? 0 : 1
                                 a.resume_checkpoint = resumePtr

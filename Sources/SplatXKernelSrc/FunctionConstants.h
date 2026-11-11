@@ -2,7 +2,7 @@
 // (shared by host C++ and device MSL)
 //
 // D4: index bands — projection 0–7, SH 8–15, isect 16–23, raster 24–31, adam/mcmc 32–39,
-//     ssim 40–47.
+//     ssim 40–47, train step 48–55.
 // D5-3: for a function constant, both the name and the index MUST be unique library-wide —
 //        every .metal TU shares the single declaration below (docs/kernel-specs/00-index.md §2).
 #ifndef SPLATX_FUNCTION_CONSTANTS_H
@@ -29,6 +29,8 @@ enum SXFunctionConstantIndex {
     kFCAdamHasValidMask  = 32,
     // --- ssim (40–47) ---
     kFCSsimNeedCoeffs    = 40,
+    // --- train step (48–55) ---
+    kFCTrainHasMask      = 48,
 };
 
 #ifdef __METAL_VERSION__
@@ -48,6 +50,7 @@ constant bool kRastHasAbsGrad    [[function_constant(kFCRastHasAbsGrad)]];
 constant bool kRastHasDepth      [[function_constant(kFCRastHasDepth)]];
 constant bool kAdamHasValidMask  [[function_constant(kFCAdamHasValidMask)]];
 constant bool kSsimNeedCoeffs    [[function_constant(kFCSsimNeedCoeffs)]];
+constant bool kTrainHasMask      [[function_constant(kFCTrainHasMask)]];
 #endif // __METAL_VERSION__
 
 #endif // SPLATX_FUNCTION_CONSTANTS_H

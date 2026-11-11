@@ -103,6 +103,14 @@ public final class SplatXTrainer: Sendable {
         /// (depths/<stem>.png beside images/ — splatx_train_c.h SxTrainArgs.depth_weight).
         /// 0 = off.
         public var depthWeight: Float = 0
+        /// Shape regulariser (splatx_train_c.h SxTrainArgs.flatten_weight): with the linear
+        /// scales sorted s1 ≥ s2 ≥ s3, loss += (w/N)·Σ s3. 0 = off.
+        public var flattenWeight: Float = 0
+        /// Needle hinge on s1/s2 above needleRatio: loss += (w/N)·Σ max(0, s1/s2 − ratio).
+        /// 0 = off.
+        public var needleWeight: Float = 0
+        /// The s1/s2 threshold of the needle hinge (>= 1).
+        public var needleRatio: Float = 5
         /// Anti-aliasing (the Mip-Splatting compensation — default off = gsplat classic).
         public var antialiased: Bool = false
         /// device-resident train_step (default on — the reference path for performance).
@@ -179,6 +187,8 @@ public final class SplatXTrainer: Sendable {
         public let peakMemoryFootprintMB: Int
         public let availableMemoryMB: Int  // os_proc_available_memory (iOS — 0 on macOS)
         public let depthRMSE: Double?      // held-out expected-depth RMSE (m) on an eval tick with sidecars
+        public let maskedPSNR: Double?     // held-out in-mask PSNR (dB) on an eval tick with masks
+        public let maskedDepthRMSE: Double? // held-out depth RMSE (m) over depth-valid in-mask samples
     }
 
     /// An in-memory snapshot (app round 3 Task 1) — a pointer view of the current model during
@@ -235,7 +245,10 @@ public final class SplatXTrainer: Sendable {
         public let totalIterations: Int    // the schedule denominator (differs from runUntil on extended resume)
         public let finalPSNR: Double?      // the final eval (when testSplit > 0 && the run completed)
         public let finalDepthRMSE: Double? // held-out expected-depth RMSE (m) — needs test views with sidecars
-        public let trainSeconds: Double    // wall clock of the training loop
+        public let finalMaskedPSNR: Double?      // held-out in-mask PSNR (dB) — needs test views with masks
+        public let finalMaskedDepthRMSE: Double? // held-out in-mask depth RMSE (m) — masks and sidecars
+        public let maskViews: Int                // views with a masks/<stem>.png sidecar
+        public let trainSeconds: Double   // wall clock of the training loop
         public let wallClockSeconds: Double
         public let splatCount: Int         // N rows that passed the export filter
         public let fileSizeBytes: Int
@@ -514,6 +527,9 @@ public final class SplatXTrainer: Sendable {
                     a.eval_every = Int32(opts.evalEvery)
                     a.ssim_weight = opts.ssimWeight
                     a.depth_weight = opts.depthWeight
+                    a.flatten_weight = opts.flattenWeight
+                    a.needle_weight = opts.needleWeight
+                    a.needle_ratio = opts.needleRatio
                     a.antialiased = opts.antialiased ? 1 : 0
                     a.resident = opts.resident ? 1 : 0
                     a.resume_checkpoint = cp.resume
@@ -580,6 +596,10 @@ public final class SplatXTrainer: Sendable {
             totalIterations: Int(stats.total_iters),
             finalPSNR: stats.final_eval_psnr.isNaN ? nil : Double(stats.final_eval_psnr),
             finalDepthRMSE: stats.final_depth_rmse.isNaN ? nil : Double(stats.final_depth_rmse),
+            finalMaskedPSNR: stats.final_psnr_masked.isNaN ? nil : Double(stats.final_psnr_masked),
+            finalMaskedDepthRMSE: stats.final_depth_rmse_masked.isNaN
+                ? nil : Double(stats.final_depth_rmse_masked),
+            maskViews: Int(stats.mask_views),
             trainSeconds: stats.train_seconds,
             wallClockSeconds: snapshot.elapsed,
             splatCount: Int(stats.exported_splats),
@@ -660,7 +680,9 @@ private final class ProgressRelay: Sendable {
             memoryFootprintMB: footprint,
             peakMemoryFootprintMB: state.withLock { $0.peakFootprintMB },
             availableMemoryMB: available,
-            depthRMSE: p.depth_rmse.isNaN ? nil : Double(p.depth_rmse)))
+            depthRMSE: p.depth_rmse.isNaN ? nil : Double(p.depth_rmse),
+            maskedPSNR: p.psnr_masked.isNaN ? nil : Double(p.psnr_masked),
+            maskedDepthRMSE: p.depth_rmse_masked.isNaN ? nil : Double(p.depth_rmse_masked)))
     }
 
     /// The synthesized cooling tick — the input for the UI "Cooling down…" while parked (no step
@@ -677,7 +699,7 @@ private final class ProgressRelay: Sendable {
             elapsedSeconds: Date().timeIntervalSince(startedAt),
             thermalState: Int(sx_thermal_get_state()), coolingDown: true,
             memoryFootprintMB: footprint, peakMemoryFootprintMB: t.peakFootprintMB,
-            availableMemoryMB: available, depthRMSE: nil))
+            availableMemoryMB: available, depthRMSE: nil, maskedPSNR: nil, maskedDepthRMSE: nil))
     }
 
     /// task_vm_info.phys_footprint (MB) — the same metric as the Xcode memory gauge.

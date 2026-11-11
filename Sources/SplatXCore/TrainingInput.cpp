@@ -12,6 +12,8 @@ TrainingInput training_input_from_colmap(const ColmapBundle& b, const std::strin
     const fs::path depths_dir = fs::path(images_dir).parent_path() / "depths";
     std::error_code ec;
     const bool has_depths_dir = fs::is_directory(depths_dir, ec);
+    const fs::path masks_dir = fs::path(images_dir).parent_path() / "masks";
+    const bool has_masks_dir = fs::is_directory(masks_dir, ec);
     std::unordered_map<int32_t, const ColmapCamera*> cam_by_id;
     for (const auto& c : b.cameras) cam_by_id[c.id] = &c;
 
@@ -46,6 +48,11 @@ TrainingInput training_input_from_colmap(const ColmapBundle& b, const std::strin
                 tc.depth_path = depth.string();
                 if (fs::is_regular_file(conf, ec)) tc.confidence_path = conf.string();
             }
+        }
+        if (has_masks_dir) {
+            const fs::path stem = fs::path(im.name).replace_extension();
+            const fs::path mask = masks_dir / fs::path(stem.string() + ".png");
+            if (fs::is_regular_file(mask, ec)) tc.mask_path = mask.string();
         }
         ti.cameras.push_back(std::move(tc));
     }

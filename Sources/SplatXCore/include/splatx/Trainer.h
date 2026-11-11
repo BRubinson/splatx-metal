@@ -8,6 +8,7 @@
 #include "splatx/Checkpoint.h"
 #include "splatx/DepthSupervision.h"
 #include "splatx/KernelBackend.h"
+#include "splatx/RegionMask.h"
 #include "splatx/SplatCloud.h"
 #include "splatx/TrainingInput.h"
 #include <cstdint>
@@ -97,6 +98,12 @@ struct L1LossResult {
 
 L1LossResult l1_loss_and_grad(const float* render, const float* gt, int64_t n_elems);
 
+// The masked L1 (RegionMask.h): loss = Σ m(p)·|r−g| / (3M), v = sign(r−g)·m(p)/(3M) over a
+// view_w × view_h RGB view, with M = mask_view_count. With an all-ones mask it equals
+// l1_loss_and_grad bit for bit; M = 0 gives loss 0 and a zero gradient.
+L1LossResult l1_loss_and_grad_masked(const float* render, const float* gt, int view_w, int view_h,
+                                     const RegionMask& mask, int64_t mask_count);
+
 // ===== PSNR + train/test split (Phase 2 Task 5 — the v0.1 gate measurement tools) =====
 // psnr = 10·log10(1/mse), mse = mean((a-b)²) over all pixels and channels (accumulated in double)
 // — this presumes 0..1 normalized images. Identical to the gsplat evaluation definition
@@ -106,6 +113,9 @@ L1LossResult l1_loss_and_grad(const float* render, const float* gt, int64_t n_el
 // (corresponding to simple_trainer.py:1240 `torch.clamp(colors, 0, 1)`). null, or n_elems<=0,
 // throws.
 float psnr(const float* a, const float* b, int64_t n_elems);
+// The PSNR over the in-mask pixels of an RGB view (all three channels, f64 sum). NaN when the mask
+// has no in-mask pixel; with an all-ones mask it equals psnr.
+float psnr_masked(const float* a, const float* b, int view_w, int view_h, const RegionMask& mask);
 
 // ===== color_correct (eval only — cc_psnr; spec 2026-07-15-color-correct-eval §3) =====
 // An exact port of color_correct_affine from gsplat gsplat/color_correct.py:98–149 (commit
@@ -271,6 +281,17 @@ struct TrainConfig {
     // depth_weight·(inverse-depth L1 over the expected depth) to the loss. 0 = off — the RGB-only
     // kernels and the previous trajectory, bit for bit in the forward. Must be finite and >= 0.
     float depth_weight = 0.0f;
+    // Shape regulariser (train_scale_shape_reg / add_shape_reg_grad_inplace): with the linear
+    // scales sorted s1 ≥ s2 ≥ s3 per Gaussian, loss += (flatten_weight/N)·Σ s3 (flatten toward a
+    // surface disc) + (needle_weight/N)·Σ max(0, s1/s2 − needle_ratio) (the hinge reads s1/s2, never
+    // s1/s3, so it does not fight the flatten term). Added to the gradients only, never to the
+    // reported loss. Weights 0 = off (the previous trajectory); finite, >= 0; needle_ratio >= 1.
+    float flatten_weight = 0.0f;
+    float needle_weight = 0.0f;
+    float needle_ratio = 5.0f;
+    // Whether the dataset carries region masks (RegionMask.h). The mask itself arrives per step;
+    // this only enters the checkpoint fingerprint (TrainC sets it from the sidecars).
+    bool has_mask = false;
     // MCMC densification (Phase 2 Task 3 — with enabled=false this is the same fixed-N training
     // as 1c)
     McmcOptions mcmc;
@@ -335,6 +356,11 @@ void add_opacity_reg_grad_inplace(std::vector<float>& v_opacities, const float* 
                                   float reg);
 void add_scale_reg_grad_inplace(std::vector<float>& v_scales, const float* scales_lin,
                                 float reg);
+// The shape regulariser's host formula (TrainConfig.flatten_weight; train_scale_shape_reg is the
+// resident twin), over N = v_scales.size()/3 Gaussians: flatten_w = flatten_weight/N and
+// needle_w = needle_weight/N, each a no-op at <= 0.
+void add_shape_reg_grad_inplace(std::vector<float>& v_scales, const float* scales_lin,
+                                float flatten_w, float needle_w, float needle_ratio);
 
 struct TrainStepResult {
     // The reported loss = (1-λ)·L1 + λ·(1-ssim) (λ = ssim_weight; with 0 it is pure L1 — the same
@@ -406,8 +432,10 @@ public:
     // With cfg.resident and backend support, this takes the resident step path (otherwise the
     // previous host round-trip D7 assembly).
     // depth: the view's LiDAR target — it supervises the step only when cfg.depth_weight > 0.
+    // mask: the view's region mask (RegionMask.h) — it masks the L1, SSIM and depth terms; its
+    // view_count/ssim_count are used when >= 0, else computed. nullptr = unmasked.
     TrainStepResult step(const TrainingCamera& cam, const float* gt_rgb, int iter,
-                         const DepthTarget* depth = nullptr);
+                         const DepthTarget* depth = nullptr, const RegionMask* mask = nullptr);
     // Forward-only render with the expected depth (full sh_degree).
     DepthRender render_with_depth(const TrainingCamera& cam);
     // Forward-only render (eval/preview — full sh_degree). Returns [H,W,3].
@@ -503,7 +531,9 @@ private:
     void sync_host_for_mutation();  // download + move Home to host (required before mutating)
     ResidentParamSync make_sync(int64_t rows); // pointer view of the 6 parameter/moment groups
     TrainStepResult step_resident(const TrainingCamera& cam, const float* gt_rgb, int iter,
-                                  const DepthTarget* depth);
+                                  const DepthTarget* depth, const RegionMask* mask,
+                                  int64_t mask_count, int64_t mask_ssim_count,
+                                  int64_t depth_valid);
 
     KernelBackend& backend_;
     SplatCloud cloud_; // with mcmc.enabled, a cap_max fixed arena (count = alive, the vectors

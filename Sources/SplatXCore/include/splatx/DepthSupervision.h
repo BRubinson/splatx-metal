@@ -13,6 +13,9 @@
 // M counts the valid sidecar samples over the whole view (independent of the render); pixels with
 // α_p < kDepthMinAlpha or ED_p < kDepthMinZ contribute neither loss nor gradient. The total
 // training loss adds depth_weight·L to the RGB loss.
+//
+// Region mask (RegionMask.h): every function below takes an optional mask; with one, a sample is
+// valid only when it is depth-valid and in-mask (M counts that intersection).
 #pragma once
 #include <cstdint>
 #include <string>
@@ -20,13 +23,16 @@
 
 namespace splatx {
 
+struct RegionMask;
+
 // Samples whose confidence code is below this are dropped at load time.
 inline constexpr uint16_t kDepthMinConfidence = 1;
 
 struct DepthTarget {
     int width = 0, height = 0;
     std::vector<float> depth_m; // [H,W] metres, 0 = invalid
-    int64_t view_valid = -1;    // depth_valid_count for the view, cached by the loader; < 0 = unknown
+    int64_t view_valid = -1;    // depth_valid_count for the view (with its region mask when it has
+                                // one), cached by the loader; < 0 = unknown
     bool empty() const { return depth_m.empty(); }
 };
 
@@ -35,14 +41,16 @@ struct DepthTarget {
 DepthTarget load_depth_sidecar(const std::string& depth_path, const std::string& conf_path);
 
 // Number of view pixels whose nearest sidecar sample is valid — the loss denominator M.
-int64_t depth_valid_count(const DepthTarget& t, int view_w, int view_h);
+int64_t depth_valid_count(const DepthTarget& t, int view_w, int view_h,
+                          const RegionMask* mask = nullptr);
 
 // The expected depth of one pixel (0 below kDepthMinAlpha).
 float expected_depth(float acc, float alpha);
 
 // The unweighted loss L (f64 sum) — the reporting path shared by the host and resident steps.
 float depth_l1_loss(const float* acc, const float* alpha, const float* gt, int view_w, int view_h,
-                    int depth_w, int depth_h, int64_t n_valid);
+                    int depth_w, int depth_h, int64_t n_valid,
+                    const RegionMask* mask = nullptr);
 
 struct DepthLossResult {
     float loss = 0.f;                     // unweighted L
@@ -52,7 +60,8 @@ struct DepthLossResult {
 
 // The host formula (train_depth_grad reproduces it on the resident path).
 DepthLossResult depth_loss_and_grad(const float* acc, const float* alpha, const DepthTarget& t,
-                                    int view_w, int view_h, int64_t n_valid, float weight);
+                                    int view_w, int view_h, int64_t n_valid, float weight,
+                                    const RegionMask* mask = nullptr);
 
 // Squared error of the expected depth against the sidecar over the same mask, for the held-out
 // RMSE (metres). ed is the per-pixel expected depth (expected_depth()).
@@ -61,6 +70,6 @@ struct DepthErrorSum {
     int64_t n = 0;
 };
 void accumulate_depth_error(const float* ed, const DepthTarget& t, int view_w, int view_h,
-                            DepthErrorSum& sum);
+                            DepthErrorSum& sum, const RegionMask* mask = nullptr);
 
 } // namespace splatx

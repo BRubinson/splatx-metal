@@ -10,7 +10,8 @@
 //
 // Format (a bespoke binary, fixed little-endian — every Apple target is LE):
 //   magic "SXCK" + version(u32) + flags(u32, bit0 = fp16)
-//   config fingerprint (written field by field — struct padding is not written)
+//   config fingerprint (written field by field — struct padding is not written; version 2 appends
+//   flatten_weight, needle_weight, needle_ratio (f32 ×3) and has_mask (u8) + 3 zero bytes)
 //   iter(i32) + alive_count(i64)
 //   mcmc RNG state (u64 length + the mt19937_64 text serialization — length 0 if mcmc is off)
 //   params ×6 (D3 group order) → Adam moments ×6 (exp_avg, exp_avg_sq per group)
@@ -93,6 +94,12 @@ struct CheckpointConfig {
     uint64_t mcmc_seed = 0;   // 0 if mcmc is off
     float scene_scale = 1.0f;
     float ssim_weight = 0.0f;
+    // Format version 2: the shape regulariser and the region-mask bit (the loss definition — a
+    // version 1 file reads as weights 0, ratio 5, no mask).
+    float flatten_weight = 0.0f;
+    float needle_weight = 0.0f;
+    float needle_ratio = 5.0f;
+    uint8_t has_mask = 0;
 };
 
 // Adam moment snapshot (corresponds to Trainer::AdamState — defined independently to avoid a

@@ -196,6 +196,10 @@ typedef struct SxTrainProgress {
     // ---- Depth supervision extension (at the end of the struct — existing offsets unchanged) ----
     float depth_rmse;      // held-out expected-depth RMSE (m) on an eval tick when test views have
                            // depth sidecars, else NaN (DepthSupervision.h convention)
+    // ---- Region mask extension (at the end of the struct — existing offsets unchanged) ----
+    float psnr_masked;       // held-out PSNR (dB) over in-mask pixels on an eval tick when test
+                             // views have masks/<stem>.png, else NaN (RegionMask.h)
+    float depth_rmse_masked; // held-out depth RMSE (m) over depth-valid in-mask samples, else NaN
 } SxTrainProgress;
 
 // Called synchronously on the training-loop thread — a slow callback delays training by exactly
@@ -284,6 +288,13 @@ typedef struct SxTrainStats {
     // samples (DepthSupervision.h mask). NaN when it did not run or no test view has a sidecar —
     // reported for every run with sidecars, depth-supervised or not.
     float final_depth_rmse;
+    // ---- Region mask extension (at the end of the struct — existing offsets unchanged) ----
+    // The final eval over the region masks (RegionMask.h): the mean over held-out views with an
+    // in-mask pixel of their in-mask PSNR (dB), and the depth RMSE (m) pooled over the depth-valid
+    // in-mask samples. NaN when it did not run or no test view has a mask.
+    float final_psnr_masked;
+    float final_depth_rmse_masked;
+    int32_t mask_views; // views (train + test) with a masks/<stem>.png sidecar
 } SxTrainStats;
 
 // All of the sx_train_run arguments plus the Task 5 extensions. **Zero/NULL-initialize first**,
@@ -385,6 +396,15 @@ typedef struct SxTrainArgs {
     // views that have a depth sidecar (depths/<stem>.png beside images/; DepthSupervision.h).
     // 0 = off (RGB-only training, unchanged). Must be finite and >= 0.
     float depth_weight;
+    // ---- Shape regulariser extension (at the end of the struct — zero-init means off) ----
+    // Per Gaussian with linear scales s1 ≥ s2 ≥ s3 (TrainConfig in Trainer.h): flatten_weight pulls
+    // s3 down (loss (w/N)·Σ s3), needle_weight is a hinge on s1/s2 above needle_ratio (loss
+    // (w/N)·Σ max(0, s1/s2 − ratio)). Weights finite and >= 0, 0 = off; needle_ratio >= 1, and 0
+    // reads as 5. Region masks need no argument: masks/<stem>.png sidecars beside images/ switch
+    // them on (RegionMask.h).
+    float flatten_weight;
+    float needle_weight;
+    float needle_ratio;
 } SxTrainArgs;
 
 // The struct-argument entry point itself — the return/error contract is identical to sx_train_run

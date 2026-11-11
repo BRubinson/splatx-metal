@@ -185,7 +185,32 @@ struct TrainDepthGradParams {
     float g;
 };
 
+// The region mask (kTrainHasMask — RegionMask.h): a [mask_height,mask_width] 0/1 grid sampled
+// nearest-neighbour for each view pixel through sx_depth_sidecar_coord. map_w/map_h are the valid
+// SSIM map dims (train_ssim_mask_coeffs; the map pixel (x, y) is centred on view pixel (x+5, y+5)).
+struct TrainMaskParams {
+    uint width;       // view
+    uint height;
+    uint mask_width;  // sidecar
+    uint mask_height;
+    uint map_w;       // W - 10
+    uint map_h;       // H - 10
+};
+
+// train_scale_shape_reg — per Gaussian, with linear scales sorted s1 ≥ s2 ≥ s3:
+//   d/dlog s3 += flatten_w·s3;   r = s1/s2 > needle_ratio → d/dlog s1 += needle_w·r, d/dlog s2 −= needle_w·r
+// flatten_w = flatten_weight/N and needle_w = needle_weight/N (computed on the host).
+struct TrainShapeRegParams {
+    uint  n;
+    float flatten_w;
+    float needle_w;
+    float needle_ratio;
+};
+
 #ifndef __METAL_VERSION__
+static_assert(sizeof(TrainMaskParams) == 24, "TrainMaskParams: host/device layout mismatch");
+static_assert(sizeof(TrainShapeRegParams) == 16,
+              "TrainShapeRegParams: host/device layout mismatch");
 static_assert(sizeof(TrainEltParams) == 4, "TrainEltParams: host/device layout mismatch");
 static_assert(sizeof(TrainPrepShParams) == 16, "TrainPrepShParams: host/device layout mismatch");
 static_assert(sizeof(TrainCoeffsParams) == 8, "TrainCoeffsParams: host/device layout mismatch");

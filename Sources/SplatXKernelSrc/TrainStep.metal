@@ -140,25 +140,61 @@ kernel void train_sh_post_op(
 //   base = sign(render-gt)·g (sign(0)=0), out = has_dssim ? w_l1·base + v_dssim : base.
 // (With λ=0, base passes through unchanged — bit-identical to the previous pure-L1 behavior.
 // The loss scalar is owned by the host f64 summation.)
+// The region mask value of view pixel (x, y) (the host twin is RegionMask::at).
+static inline float sx_mask_at(device const float* mask, uint x, uint y,
+                               constant TrainMaskParams& M)
+{
+    const uint sx = sx_depth_sidecar_coord(x, M.width, M.mask_width);
+    const uint sy = sx_depth_sidecar_coord(y, M.height, M.mask_height);
+    return mask[sy * M.mask_width + sx];
+}
+
+// With kTrainHasMask the L1 term is masked: base·m(p), and the host passes g = 1/(3M).
 kernel void train_l1_grad(
     device const float* render  [[buffer(0)]],
     device const float* gt      [[buffer(1)]],
     device const float* v_dssim [[buffer(2)]], // not accessed when has_dssim=0 (dummy bind allowed)
     device float*       out     [[buffer(3)]],
     constant TrainL1GradParams& P [[buffer(4)]],
+    device const float* mask    [[buffer(5), function_constant(kTrainHasMask)]],
+    constant TrainMaskParams& MP [[buffer(6), function_constant(kTrainHasMask)]],
     uint i [[thread_position_in_grid]])
 {
     if (i >= P.n) return;
     const float d = render[i] - gt[i];
-    const float base = d > 0.0f ? P.g : (d < 0.0f ? -P.g : 0.0f);
+    float base = d > 0.0f ? P.g : (d < 0.0f ? -P.g : 0.0f);
+    if (kTrainHasMask) {
+        const uint px = i / 3;
+        base *= sx_mask_at(mask, px % MP.width, px / MP.width, MP);
+    }
     out[i] = P.has_dssim ? (P.w_l1 * base + v_dssim[i]) : base;
+}
+
+// Masked SSIM: scales the three coefficient maps (the per-map-pixel dL/dS) by the mask at the
+// window centre before ssim_bwd (the host twin is mask_ssim_coeffs_inplace). grid = map_h·map_w·3.
+kernel void train_ssim_mask_coeffs(
+    device float*       coeff_mu    [[buffer(0)]], // [map_h,map_w,3] in-place
+    device float*       coeff_sigma [[buffer(1)]],
+    device float*       coeff_cross [[buffer(2)]],
+    device const float* mask        [[buffer(3)]],
+    constant TrainMaskParams& MP    [[buffer(4)]],
+    uint i [[thread_position_in_grid]])
+{
+    if (i >= MP.map_w * MP.map_h * 3) return;
+    const uint q = i / 3;
+    const uint half_w = (kSsimWindowSize - 1) / 2;
+    const float m = sx_mask_at(mask, q % MP.map_w + half_w, q / MP.map_w + half_w, MP);
+    coeff_mu[i] *= m;
+    coeff_sigma[i] *= m;
+    coeff_cross[i] *= m;
 }
 
 // Inverse-depth L1 gradient over the expected depth ED = acc/α (reproduces the host
 // depth_loss_and_grad, the single source of truth for the formula): with r = 1/ED − 1/gt,
 //   v_acc = g·sign(r)·(−1/ED²)/α,   v_α = −v_acc·ED.
 // Pixels whose sidecar sample is 0 (no LiDAR or below the confidence floor), whose α is below
-// kDepthMinAlpha or whose ED is below kDepthMinZ write 0 to both outputs.
+// kDepthMinAlpha or whose ED is below kDepthMinZ write 0 to both outputs; with kTrainHasMask so do
+// out-of-mask pixels (the host passes g = depth_weight / the depth-valid ∩ in-mask count).
 kernel void train_depth_grad(
     device const float* render_depths   [[buffer(0)]], // [H,W] Σ w·z
     device const float* render_alphas   [[buffer(1)]], // [H,W]
@@ -166,6 +202,8 @@ kernel void train_depth_grad(
     device float*       v_render_depths [[buffer(3)]], // [H,W]
     device float*       v_render_alphas [[buffer(4)]], // [H,W]
     constant TrainDepthGradParams& P [[buffer(5)]],
+    device const float* mask            [[buffer(6), function_constant(kTrainHasMask)]],
+    constant TrainMaskParams& MP        [[buffer(7), function_constant(kTrainHasMask)]],
     uint i [[thread_position_in_grid]])
 {
     if (i >= P.width * P.height) return;
@@ -175,8 +213,9 @@ kernel void train_depth_grad(
     const uint sy = sx_depth_sidecar_coord(y, P.height, P.depth_height);
     const float gt = gt_depth[sy * P.depth_width + sx];
     const float a  = render_alphas[i];
+    const bool in_mask = kTrainHasMask ? sx_mask_at(mask, x, y, MP) > 0.0f : true;
     float v_acc = 0.0f, v_a = 0.0f;
-    if (gt > 0.0f && a >= kDepthMinAlpha) {
+    if (in_mask && gt > 0.0f && a >= kDepthMinAlpha) {
         const float ed = render_depths[i] / a;
         if (ed >= kDepthMinZ) {
             const float r = 1.0f / ed - 1.0f / gt;
@@ -229,6 +268,34 @@ kernel void train_scale_grad_chain(
     float v = v_scales[i] * scales_lin[i];
     if (P.reg_w > 0.0f) v += P.reg_w * scales_lin[i];
     v_scales[i] = v;
+}
+
+// The shape regulariser, one thread per Gaussian after train_scale_grad_chain (the host twin is
+// add_shape_reg_grad_inplace): with the linear scales sorted s1 ≥ s2 ≥ s3 (ties keep axis order),
+//   flatten  d/dlog s3 += flatten_w·s3                         (loss flatten_w·Σ s3)
+//   needle   r = s1/s2 > needle_ratio: d/dlog s1 += needle_w·r, d/dlog s2 −= needle_w·r
+//                                                              (loss needle_w·Σ max(0, r − ratio))
+// The needle hinge reads s1/s2, never s1/s3, so a flattened disc pays nothing.
+kernel void train_scale_shape_reg(
+    device float*       v_scales   [[buffer(0)]], // [N,3] d/dlog s, in-place
+    device const float* scales_lin [[buffer(1)]], // [N,3]
+    constant TrainShapeRegParams& P [[buffer(2)]],
+    uint g [[thread_position_in_grid]])
+{
+    if (g >= P.n) return;
+    const float s[3] = {scales_lin[g * 3], scales_lin[g * 3 + 1], scales_lin[g * 3 + 2]};
+    uint i1 = 0, i2 = 1, i3 = 2;
+    if (s[i1] < s[i2]) { const uint t = i1; i1 = i2; i2 = t; }
+    if (s[i2] < s[i3]) { const uint t = i2; i2 = i3; i3 = t; }
+    if (s[i1] < s[i2]) { const uint t = i1; i1 = i2; i2 = t; }
+    if (P.flatten_w > 0.0f) v_scales[g * 3 + i3] += P.flatten_w * s[i3];
+    if (P.needle_w > 0.0f && s[i2] > 0.0f) {
+        const float r = precise::divide(s[i1], s[i2]);
+        if (r > P.needle_ratio) {
+            v_scales[g * 3 + i1] += P.needle_w * r;
+            v_scales[g * 3 + i2] -= P.needle_w * r;
+        }
+    }
 }
 
 // The opacity gradient chain plus regularization (host chain_opacity_grads_inplace →

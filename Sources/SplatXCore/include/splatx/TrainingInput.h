@@ -20,6 +20,9 @@ struct TrainingCamera {
     // depths/<stem>.conf.png, each empty when the file does not exist.
     std::string depth_path;
     std::string confidence_path;
+    // Region mask sidecar (RegionMask.h): masks/<stem>.png beside the image folder, empty when the
+    // file does not exist (the view is then unmasked).
+    std::string mask_path;
 };
 
 struct TrainingInput {
@@ -28,7 +31,8 @@ struct TrainingInput {
     std::vector<uint8_t> seed_rgb;  // [M,3]
 };
 
-// Also resolves each image's depth sidecar under <parent of images_dir>/depths/.
+// Also resolves each image's depth sidecar under <parent of images_dir>/depths/ and its region
+// mask under <parent of images_dir>/masks/.
 TrainingInput training_input_from_colmap(const ColmapBundle& bundle, const std::string& images_dir);
 
 // Resolves the image folder for a given factor (Integration Task 2 — the iOS capture app bundle

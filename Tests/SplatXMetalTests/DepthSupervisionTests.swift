@@ -129,7 +129,7 @@ extension GpuTests {
 
 // MARK: - Binary little-endian PLY reader (the INRIA layout the trainer writes)
 
-private struct Ply {
+struct Ply {
     let names: [String]
     let count: Int
     let values: [Float]

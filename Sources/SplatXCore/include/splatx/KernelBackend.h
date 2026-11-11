@@ -7,6 +7,8 @@
 
 namespace splatx {
 
+struct RegionMask;
+
 // ===== Phase 1 kernel interface structs =====
 // The field names are exactly the gsplat kernel argument names (D4; docs/kernel-specs/01, 02, 03,
 // 06).
@@ -392,6 +394,14 @@ struct ResidentStepInputs {
     int64_t depth_valid = 0;         // valid sidecar samples over the view (the loss denominator)
     float depth_weight = 0.f;
     bool want_depth = false;
+    // Region mask (RegionMask.h; training steps only): with mask set the L1, SSIM and depth terms
+    // are masked (kTrainHasMask) and normalised by mask_count (L1), mask_ssim_count (SSIM) and
+    // depth_valid (the depth-valid ∩ in-mask count). nullptr = unmasked, the previous kernels.
+    const RegionMask* mask = nullptr;
+    int64_t mask_count = 0;         // M: in-mask view pixels
+    int64_t mask_ssim_count = 0;     // Ms: in-mask valid SSIM map pixels
+    // Shape regulariser (train_scale_shape_reg): flatten_weight/N and needle_weight/N, 0 = off.
+    float flatten_w = 0.f, needle_w = 0.f, needle_ratio = 5.f;
 };
 
 struct ResidentStepOutputs {
